@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
 const crypto = require('node:crypto');
+const {EventEmitter} = require('node:events');
+const {execFile} = require('node:child_process');
 const {appConfigDir, plain} = require('./config.cjs');
 
 const JSON_LIMIT = 12 * 1024 * 1024;
@@ -145,10 +147,80 @@ function verifyManifest(bytes, signature, certificate, identity) {
   return manifest;
 }
 
-function nativeRequest(url, options, callback) {
-  const request = https.request(url, options, callback);
-  request.end();
-  return request;
+const windowsProxyCommand = Buffer.from(
+  '$ErrorActionPreference = "Stop"; $target = [Uri]$env:LIXING_PROXY_TARGET; ' +
+  '$route = [Net.WebRequest]::GetSystemWebProxy().GetProxy($target); ' +
+  'if ($route -and $route -ne $target) { [Console]::Write($route.AbsoluteUri) }',
+  'utf16le'
+).toString('base64');
+
+function systemProxy(url, signal) {
+  const windowsRoot = process.env.SystemRoot;
+  if (!windowsRoot || !path.isAbsolute(windowsRoot)) throw new Error('无法定位 Windows 系统代理入口');
+  const powershell = path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return new Promise((resolve, reject) => {
+    execFile(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', windowsProxyCommand], {
+      env: {...process.env, LIXING_PROXY_TARGET: url.href},
+      timeout: 6000,
+      maxBuffer: 4096,
+      windowsHide: true,
+      signal
+    }, (error, stdout) => {
+      if (error) reject(new Error('读取 Windows 系统代理失败'));
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+function createNativeTransport(environment = process.env) {
+  const configuredProxy = environment.https_proxy || environment.HTTPS_PROXY
+    || environment.all_proxy || environment.ALL_PROXY;
+  const noProxy = environment.no_proxy ?? environment.NO_PROXY;
+  const directAgent = new https.Agent();
+  let lastProxy;
+  let proxyAgent;
+
+  return (url, options, callback) => {
+    const handle = new EventEmitter();
+    const controller = new AbortController();
+    let request;
+    handle.destroy = () => {
+      controller.abort();
+      request?.destroy();
+    };
+
+    async function open() {
+      const value = configuredProxy || (process.platform === 'win32' ? await systemProxy(url, controller.signal) : '');
+      if (controller.signal.aborted) return;
+      if (value && value !== lastProxy) {
+        let proxy;
+        try {
+          proxy = new URL(value);
+        } catch {
+          throw new Error('更新网络代理地址无效');
+        }
+        if (!['http:', 'https:'].includes(proxy.protocol) || proxy.search || proxy.hash || proxy.pathname !== '/') {
+          throw new Error('更新网络代理必须使用 HTTP 或 HTTPS');
+        }
+        const [major, minor] = process.versions.node.split('.').map(Number);
+        if (major < 22 || major === 22 && minor < 21 || major === 23 || major === 24 && minor < 5) {
+          throw new Error('当前 Node.js 版本不支持更新代理');
+        }
+        // Native Agent applies NO_PROXY for the actual host on each checked redirect.
+        proxyAgent = new https.Agent({proxyEnv: {HTTPS_PROXY: proxy.href, NO_PROXY: noProxy}});
+        lastProxy = value;
+      }
+      const agent = value ? proxyAgent : directAgent;
+      request = https.request(url, {...options, agent, rejectUnauthorized: true}, callback);
+      request.on('error', error => handle.emit('error', error));
+      request.end();
+    }
+
+    void open().catch(error => {
+      if (!controller.signal.aborted) handle.emit('error', error);
+    });
+    return handle;
+  };
 }
 
 function recordTrust(directory, release, bytes) {
@@ -197,7 +269,7 @@ function verifyArtifact(inputPath, spec) {
 
 function createReleaseChannel({
   appId, repo, currentVersion, platform = process.platform, arch = process.arch, channel = 'stable',
-  certificate, downloadDir, request = nativeRequest, setupName = v => appId + '-' + v + '-x64-Setup.exe',
+  certificate, downloadDir, request = createNativeTransport(), setupName = v => appId + '-' + v + '-x64-Setup.exe',
   hotfixKinds = [], tagPrefix = 'v', onDiscovery = () => {}
 }) {
   version(currentVersion);

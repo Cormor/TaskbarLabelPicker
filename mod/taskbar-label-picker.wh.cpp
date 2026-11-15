@@ -2,7 +2,7 @@
 // @id              taskbar-label-picker
 // @name            任务栏标签白名单
 // @description     仅隐藏所选 Windows 11 任务栏应用的文字标签
-// @version         0.1.5
+// @version         0.1.6
 // @author          砺行
 // @include         explorer.exe
 // @architecture    x86-64

@@ -16,6 +16,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -34,13 +36,15 @@ import com.lixing.components.LixingTheme
 @Composable
 fun SupportDevelopmentWindow(
     visible: Boolean,
+    logo: ImageBitmap,
     onClose: () -> Unit,
 ) {
     Window(
         onCloseRequest = onClose,
         visible = visible,
         title = "支持开发",
-        state = rememberWindowState(width = 560.dp, height = 520.dp),
+        icon = BitmapPainter(logo),
+        state = rememberWindowState(width = 640.dp, height = 520.dp),
     ) {
         LixingTheme {
             val colors = LixingTheme.colors

@@ -64,6 +64,7 @@ COMPONENT_FILES = (
 
 
 UPDATE_FILES = (
+    "README.md",
     "build-manifest.cjs",
     "cli.cjs",
     "compose/src/main/kotlin/com/lixing/update/LixingUpdater.kt",

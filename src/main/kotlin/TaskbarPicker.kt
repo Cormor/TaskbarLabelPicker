@@ -1560,7 +1560,7 @@ private fun TaskbarPickerApplication(
         visible = helpVisible && windowVisible,
         onClose = { helpVisible = false },
     )
-    SupportDevelopmentWindow(visible = supportVisible && windowVisible, onClose = { supportVisible = false })
+    SupportDevelopmentWindow(visible = supportVisible && windowVisible, logo = logo, onClose = { supportVisible = false })
     if (updater != null) TaskbarUpdateWindow(
         visible = updateVisible && windowVisible,
         logo = logo,

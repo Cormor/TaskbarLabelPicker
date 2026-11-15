@@ -8,6 +8,7 @@
 | 本项目原生 Windhawk 任务栏模块 | GPL-3.0-only。对应源码在 [mod](mod/)，另随包提供模块与 [GPL 全文](mod/LICENSE)。源文件头保留 m417z 和 Windhawk 上游来源。 |
 | Windhawk 附带的编译器运行库 | 随包保留 Windhawk 上游编译器/运行时分发许可，位于 `runtime/Windhawk/Notices`。 |
 | 砺行 Compose 组件 | 见发布源码中的 `vendor/lixing-components/LICENSE`。用于构建此版本的 Compose 接口与资源同随源码快照提供。 |
+| 砺行通用更新器 | 源于自研 SimRacingOverlay 更新模块。随 `vendor/lixing-update` 提供固定源码，沿用上述 [砺行组件许可证](vendor/lixing-components/LICENSE)，下列 Node.js 保持上游授权。 |
 | Node.js 更新运行时 | 官方 Windows x64 二进制。`NODE-LICENSE.txt` 随更新组件提供，具体版本及官方摘要锁定在 `vendor/lixing-update/package-sidecar.py`。 |
 | Java 运行时 | 包含由 JDK 21 生成的运行时，许可证与各模块第三方声明位于应用内 `app/runtime/legal`。 |
 | Kotlin、Compose Multiplatform、AndroidX、Skiko、JSON-java 等库 | JAR 保留上游随库的许可证及声明，对应依赖和版本可从该版本的 Gradle 定义、运行库名称以及 [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform)、[Kotlin](https://github.com/JetBrains/kotlin)、[AndroidX](https://github.com/androidx/androidx)、[Skiko](https://github.com/JetBrains/skiko) 和 [JSON-java](https://github.com/stleary/JSON-java) 查询。 |
