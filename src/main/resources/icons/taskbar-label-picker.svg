@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Taskbar Label Picker</title>
+  <desc>A taskbar app tile beside its label with the label hidden.</desc>
+  <rect width="256" height="256" rx="58" fill="#101112"/>
+  <rect x="17" y="17" width="222" height="222" rx="51" fill="#191B1D" stroke="#555149" stroke-width="3"/>
+
+  <rect x="38" y="62" width="180" height="132" rx="28" fill="#222527"/>
+  <rect x="55" y="92" width="54" height="54" rx="16" fill="#ADB9FF"/>
+  <path d="M68 105h12v12H68zm17 0h12v12H85zm-17 17h12v12H68zm17 0h12v12H85z" fill="#111736"/>
+
+  <path d="M130 96h65M130 116h48M130 136h57" stroke="#B7B0A3" stroke-width="9" stroke-linecap="round"/>
+  <path d="M126 145l70-61" stroke="#E8C66A" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="196" cy="84" r="7" fill="#E8C66A"/>
+</svg>

@@ -1,0 +1,870 @@
+{
+  "schema": 1,
+  "designVersion": "3.0.0",
+  "focus": {
+    "width": 3,
+    "offset": 3,
+    "role": "focus",
+    "selectedRole": "focusOnSelection"
+  },
+  "components": {
+    "C02": {
+      "parts": [
+        "icon",
+        "label"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.4",
+        "paddingBlock": "space.2",
+        "gap": "space.2",
+        "icon": "icon.default",
+        "persistentEdge": 3,
+        "underlineOffsetEm": 0.16,
+        "pressedInset": 1
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "activate": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "invokeOnce",
+        "toggleEffect": "requestOppositeOnce",
+        "statePriority": [
+          "disabled",
+          "pressed",
+          "hover",
+          "default"
+        ],
+        "focusIndependent": true
+      },
+      "variants": {
+        "primary": {
+          "fill": "accentFill",
+          "text": "onAccentFill",
+          "edge": "accentEdge",
+          "hover": "primaryHover",
+          "pressed": "primaryPressed",
+          "focus": "onAccentFill"
+        },
+        "quiet": {
+          "fill": "transparent",
+          "text": "text",
+          "edge": "transparent",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "danger": {
+          "fill": "surface",
+          "text": "danger",
+          "edge": "danger",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "pointerFill": "danger",
+          "pointerText": "onDanger",
+          "focus": "focus"
+        },
+        "selected": {
+          "fill": "selection",
+          "text": "onSelection",
+          "edge": "accentEdge",
+          "hover": "selectionHover",
+          "pressed": "selectionPressed",
+          "focus": "focusOnSelection"
+        }
+      }
+    },
+    "C03": {
+      "parts": [
+        "indicator",
+        "label",
+        "content"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2",
+        "indicator": "icon.min"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "activate": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "toggleExpanded",
+        "focusOnClose": "trigger"
+      }
+    },
+    "C05": {
+      "parts": [
+        "label",
+        "input",
+        "hint",
+        "error"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "invalid": {
+          "edge": "danger"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "effect": "editText",
+        "preserveDraft": true
+      }
+    },
+    "C07": {
+      "parts": [
+        "label",
+        "track",
+        "thumb",
+        "value"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "track": "space.1",
+        "thumb": "icon.default",
+        "thumbBorder": 2,
+        "compactHeight": 32,
+        "touchHeight": "target.comfortable"
+      },
+      "states": {
+        "default": {
+          "track": "borderControl",
+          "thumb": "surfaceRaised",
+          "thumbEdge": "accentEdge"
+        },
+        "hover": {
+          "thumb": "controlHover"
+        },
+        "pressed": {
+          "thumb": "controlPressed"
+        },
+        "disabled": {
+          "track": "disabledEdge",
+          "thumb": "disabledFill"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "step": [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown"
+          ],
+          "boundary": [
+            "Home",
+            "End"
+          ]
+        },
+        "effect": "updateValueDirectly"
+      }
+    },
+    "C08": {
+      "parts": [
+        "edge",
+        "icon",
+        "message",
+        "action"
+      ],
+      "geometry": {
+        "radius": "radius.md",
+        "border": 1,
+        "toneEdge": 3,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2"
+      },
+      "states": {
+        "info": {
+          "edge": "info"
+        },
+        "success": {
+          "edge": "success"
+        },
+        "warning": {
+          "edge": "warning"
+        },
+        "danger": {
+          "edge": "danger"
+        },
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "border": "border"
+        }
+      }
+    },
+    "C09": {
+      "parts": [
+        "currentMark",
+        "icon",
+        "label"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.1",
+        "contentGap": "space.2",
+        "marker": 3,
+        "icon": "icon.default"
+      },
+      "states": {
+        "default": {
+          "fill": "transparent",
+          "text": "text",
+          "edge": "transparent",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "current": {
+          "fill": "selection",
+          "text": "onSelection",
+          "edge": "transparent",
+          "hover": "selectionHover",
+          "pressed": "selectionPressed",
+          "focus": "focusOnSelection",
+          "marker": "onSelection"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge",
+          "marker": "disabledText"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "activate": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "navigate",
+        "currentSeparateFromFocus": true
+      }
+    },
+    "C10": {
+      "parts": [
+        "title",
+        "content",
+        "actions"
+      ],
+      "geometry": {
+        "radius": "radius.lg",
+        "border": 1,
+        "padding": "space.4"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "border"
+        },
+        "raised": {
+          "fill": "surfaceRaised",
+          "text": "text",
+          "edge": "border"
+        }
+      }
+    },
+    "C12": {
+      "parts": [
+        "trigger",
+        "value",
+        "indicator",
+        "popup",
+        "option",
+        "optionLabel",
+        "selectedMark"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2",
+        "indicator": "icon.min",
+        "popupPadding": "space.2",
+        "popupRadius": "radius.lg",
+        "visibleRows": 6,
+        "anchorGap": "space.1",
+        "workMargin": "space.4",
+        "innerFocus": 2
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "popup": {
+          "fill": "surfaceRaised",
+          "edge": "border"
+        },
+        "option": {
+          "fill": "transparent",
+          "text": "text",
+          "edge": "transparent",
+          "hover": "controlHover",
+          "pressed": "controlPressed"
+        },
+        "selected": {
+          "fill": "selection",
+          "text": "onSelection",
+          "edge": "accentEdge",
+          "hover": "selectionHover",
+          "pressed": "selectionPressed",
+          "focus": "focusOnSelection"
+        },
+        "active": {
+          "edge": "focus",
+          "fill": "surface"
+        },
+        "selectedActive": {
+          "edge": "focusOnSelection"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "activate": [
+            "Enter",
+            "Space"
+          ],
+          "open": [
+            "ArrowDown",
+            "ArrowUp",
+            "F4"
+          ],
+          "move": [
+            "ArrowDown",
+            "ArrowUp"
+          ],
+          "boundary": [
+            "Home",
+            "End"
+          ],
+          "page": [
+            "PageUp",
+            "PageDown"
+          ],
+          "cancel": [
+            "Escape"
+          ],
+          "leave": [
+            "Tab"
+          ]
+        },
+        "prefixMilliseconds": 500,
+        "cancelKeepsValue": true,
+        "selectionSeparateFromActivity": true,
+        "skipDisabled": true,
+        "commit": "activeOptionOnce",
+        "focusOnCancel": "trigger",
+        "focusOnTab": "continueTraversal",
+        "triggerPointerEffect": "toggleOnRelease",
+        "outsidePressEffect": "dismissAndPassThrough"
+      }
+    },
+    "C17": {
+      "parts": [
+        "trigger",
+        "menu",
+        "item",
+        "separator"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "paddingInline": "space.3",
+        "panelPadding": "space.2",
+        "panelRadius": "radius.lg"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "border"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "move": [
+            "ArrowUp",
+            "ArrowDown"
+          ],
+          "activate": [
+            "Enter",
+            "Space"
+          ],
+          "cancel": [
+            "Escape"
+          ],
+          "submenus": [
+            "ArrowLeft",
+            "ArrowRight"
+          ]
+        },
+        "focusOnCancel": "trigger",
+        "nativeMenu": true
+      }
+    },
+    "C18": {
+      "parts": [
+        "mark",
+        "label"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "marker": 18,
+        "markerRadius": "radius.sm",
+        "gap": "space.2"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "edge": "borderControl",
+          "text": "text"
+        },
+        "selected": {
+          "fill": "choiceFill",
+          "edge": "accentEdge",
+          "mark": "onChoiceFill"
+        },
+        "mixed": {
+          "fill": "choiceFill",
+          "edge": "accentEdge",
+          "mark": "onChoiceFill"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "toggle": [
+            "Space"
+          ]
+        },
+        "effect": "toggleChecked"
+      }
+    },
+    "C19": {
+      "parts": [
+        "label",
+        "track",
+        "knob"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "trackWidthEm": 2.25,
+        "trackHeightEm": 1.25,
+        "knobEm": 0.75,
+        "border": 1,
+        "radius": "radius.pill"
+      },
+      "states": {
+        "default": {
+          "edge": "borderControl",
+          "knob": "text"
+        },
+        "on": {
+          "edge": "accentEdge",
+          "fill": "choiceFill",
+          "knob": "onChoiceFill"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "toggle": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "toggleChecked",
+        "appliesImmediately": true
+      }
+    },
+    "C20": {
+      "parts": [
+        "mark",
+        "label"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2",
+        "mark": 18,
+        "dot": 10,
+        "focusOffset": 2
+      },
+      "states": {
+        "default": {
+          "fill": "transparent",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus",
+          "markFill": "surface",
+          "markEdge": "borderControl"
+        },
+        "selected": {
+          "fill": "selection",
+          "text": "onSelection",
+          "edge": "accentEdge",
+          "hover": "selectionHover",
+          "pressed": "selectionPressed",
+          "focus": "focusOnSelection",
+          "markFill": "surface",
+          "markEdge": "accentEdge",
+          "dotFill": "choiceFill",
+          "dotEdge": "onChoiceFill"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge",
+          "markFill": "disabledFill",
+          "markEdge": "disabledEdge",
+          "dotFill": "disabledText",
+          "dotEdge": "disabledText"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "move": [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown"
+          ],
+          "activate": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "selectValue"
+      }
+    },
+    "C21": {
+      "parts": [
+        "label",
+        "editor",
+        "suggestionTrigger",
+        "hint",
+        "error",
+        "popup"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2",
+        "triggerWidth": "target.default"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "edge": "borderControl",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "focus": "focus"
+        },
+        "invalid": {
+          "edge": "danger"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "open": [
+            "F4",
+            "ArrowDown",
+            "ArrowUp"
+          ],
+          "commit": [
+            "Enter"
+          ],
+          "restore": [
+            "Escape"
+          ]
+        },
+        "popup": "C12",
+        "preserveDraftUntilCommit": true
+      }
+    },
+    "C25": {
+      "parts": [
+        "tab",
+        "label",
+        "selectedMark",
+        "panel"
+      ],
+      "geometry": {
+        "height": "target.default",
+        "radius": "radius.md",
+        "border": 1,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.1",
+        "selectedEdge": 3,
+        "panelGap": "space.3"
+      },
+      "states": {
+        "default": {
+          "fill": "transparent",
+          "text": "text"
+        },
+        "selected": {
+          "edge": "accentEdge",
+          "text": "text"
+        },
+        "disabled": {
+          "fill": "disabledFill",
+          "text": "disabledText",
+          "edge": "disabledEdge"
+        }
+      },
+      "interaction": {
+        "keys": {
+          "move": [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown"
+          ],
+          "boundary": [
+            "Home",
+            "End"
+          ],
+          "activate": [
+            "Enter",
+            "Space"
+          ]
+        },
+        "effect": "selectPanel",
+        "focusIndependent": true
+      }
+    },
+    "C31": {
+      "parts": [
+        "status",
+        "message",
+        "dismiss"
+      ],
+      "geometry": {
+        "radius": "radius.md",
+        "border": 1,
+        "toneEdge": 3,
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "gap": "space.2"
+      },
+      "states": {
+        "info": {
+          "edge": "info"
+        },
+        "success": {
+          "edge": "success"
+        },
+        "warning": {
+          "edge": "warning"
+        },
+        "danger": {
+          "edge": "danger"
+        },
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "border": "border"
+        }
+      },
+      "interaction": {
+        "effect": "announceResult",
+        "persistentWhenActionRequired": true,
+        "nativeTransientMessage": true
+      }
+    },
+    "C32": {
+      "parts": ["label", "track", "fill"],
+      "geometry": {"height": "space.2", "border": 1, "radius": "radius.pill"},
+      "states": {"default": {"track": "dataTrack", "fill": "progressFill", "edge": "borderControl"}},
+      "interaction": {"effect": "displayTaskProgress", "indeterminateWhenTotalUnknown": true}
+    },
+    "C34": {
+      "parts": [
+        "heading",
+        "row",
+        "cell"
+      ],
+      "geometry": {
+        "paddingInline": "space.3",
+        "paddingBlock": "space.2",
+        "divider": 1,
+        "hoverEdge": 1,
+        "pressedEdge": 2,
+        "focusInset": 3,
+        "markerInset": 7,
+        "marker": 3,
+        "markerGap": "space.2"
+      },
+      "states": {
+        "default": {
+          "fill": "surface",
+          "text": "text",
+          "divider": "border",
+          "hover": "controlHover",
+          "pressed": "controlPressed",
+          "interactionEdge": "borderControl",
+          "focus": "focus",
+          "pressedFocus": "accentEdge"
+        },
+        "heading": {
+          "fill": "surfaceRaised",
+          "text": "text"
+        },
+        "selected": {
+          "fill": "selection",
+          "text": "onSelection",
+          "edge": "accentEdge",
+          "hover": "selectionHover",
+          "pressed": "selectionPressed",
+          "focus": "focusOnSelection",
+          "interactionEdge": "onSelection",
+          "marker": "onSelection",
+          "pressedFocus": "focusOnSelection"
+        }
+      },
+      "interaction": {
+        "effect": "compareRows",
+        "numericAlignment": "end"
+      }
+    },
+    "C38": {
+      "parts": [
+        "label",
+        "track",
+        "fill",
+        "value"
+      ],
+      "geometry": {
+        "heightEm": 1,
+        "border": 1,
+        "radius": "radius.pill"
+      },
+      "states": {
+        "default": {
+          "track": "dataTrack",
+          "fill": "meterFill",
+          "edge": "borderControl"
+        },
+        "warning": {
+          "fill": "warning"
+        },
+        "danger": {
+          "fill": "danger"
+        }
+      },
+      "interaction": {
+        "effect": "displayMeasuredValue",
+        "missingDistinctFromZero": true
+      }
+    }
+  }
+}

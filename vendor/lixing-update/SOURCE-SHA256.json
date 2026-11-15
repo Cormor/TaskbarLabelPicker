@@ -1,0 +1,10 @@
+{
+  "build-manifest.cjs": "87d5163dc82a6bb52c5a1f6148ec0669fbbbab87939a6788e8cbdf133eb36d3b",
+  "cli.cjs": "60d22dc5b93bb0e5f24f0a618920718675fcc90f18ba294d7e9328ee6fbf043a",
+  "compose/src/main/kotlin/com/lixing/update/LixingUpdater.kt": "7d67186161a6b3fa4deb63fa8330f4aefcd576be4b6c80826d33e936a72541b1",
+  "config.cjs": "2564392119d581cc9be2decfd85cc363f84d794e597eff4e0a7ff8a6ad406fa1",
+  "lixing-update.cjs": "ab6351d72c4d56b04830ae7a0f3ebee93794e26cef03a7d8a7aa4fefe4643108",
+  "package-sidecar.py": "19f904f04dab95987c49ba9dcaa3002d0600b4784a5ac433ef9cbe783dc198f3",
+  "release-certificate.cer": "18433d307b60c6962508c20e35e36206851bf69e2683a24fa43b2ec689ae69ca",
+  "sign-release.ps1": "7664da56a047d38a3d8f4cb575ee907c7f921653875dc8ceadd2f3d327e63f9e"
+}

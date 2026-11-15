@@ -1,0 +1,8 @@
+.gradle/
+.kotlin/
+build/
+/native/*.exe
+/resources/windows-x64/TaskbarBridge.exe
+/resources/windows-x64/update/
+__pycache__/
+/.cache/
