@@ -6,7 +6,7 @@ plugins {
     id("org.jetbrains.compose") version "1.9.3"
 }
 
-version = "0.1.6"
+version = "0.1.7"
 
 val bundledUpdate = file("vendor/lixing-update/compose/src/main/kotlin")
 val updateClientSources = if (bundledUpdate.isDirectory) bundledUpdate

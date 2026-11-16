@@ -26,9 +26,9 @@ cp release-config.json resources/windows-x64/update/
 使用 NSIS 3.x 将载荷编成单个安装程序。
 
 ```sh
-makensis -WX -DVERSION=0.1.6 \
+makensis -WX -DVERSION=0.1.7 \
   -DPAYLOAD=/absolute/path/to/payload \
-  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.6-x64-Setup.exe \
+  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.7-x64-Setup.exe \
   TaskbarLabelPicker.nsi
 ```
 

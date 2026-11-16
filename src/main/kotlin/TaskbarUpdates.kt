@@ -125,7 +125,7 @@ internal fun TaskbarUpdateWindow(
                 }
                 LixingCheckbox("自动安装已验证更新", automatic, onSetAutomatic, enabled = !busy)
                 if (state.flag("verified")) {
-                    val notes = (release?.get("history") as? JsonArray).orEmpty()
+                    val notes = (release?.get("versionHistory") as? JsonArray).orEmpty()
                     for (entry in notes.filterIsInstance<JsonObject>()) {
                         BasicText(entry.text("version").orEmpty(),
                             style = TextStyle(color = colors.text, fontWeight = FontWeight.SemiBold))

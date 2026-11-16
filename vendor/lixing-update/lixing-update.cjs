@@ -63,8 +63,13 @@ function releaseHistory(input,installed,target){
    seen.add(key);return {version:item.version,notes:item.notes};
   });
   if(compare(target,installed)>0&&!entries.some(item=>compare(item.version,target)===0))throw Error('更新日志缺少目标版本说明');
-  return {history:entries.filter(item=>compare(item.version,installed)>0).sort((a,b)=>compare(a.version,b.version)),notesStatus:'complete',notesError:null};
- }catch(error){return {history:[],notesStatus:'unavailable',notesError:error.message};}
+  entries.sort((a,b)=>compare(a.version,b.version));
+  return {
+   history:entries.filter(item=>compare(item.version,installed)>0),
+   versionHistory:entries.toReversed(),
+   notesStatus:'complete',notesError:null
+  };
+ }catch(error){return {history:[],versionHistory:[],notesStatus:'unavailable',notesError:error.message};}
 }
 function version(value) {
   if (typeof value !== 'string' || !/^(?:0|[1-9]\d{0,5})(?:\.(?:0|[1-9]\d{0,5})){2}$/.test(value)) {
