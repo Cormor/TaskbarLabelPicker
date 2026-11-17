@@ -6,7 +6,7 @@ plugins {
     id("org.jetbrains.compose") version "1.9.3"
 }
 
-version = "0.1.8"
+version = "0.1.9"
 
 val bundledUpdate = file("vendor/lixing-update/compose/src/main/kotlin")
 val updateClientSources = if (bundledUpdate.isDirectory) bundledUpdate
@@ -31,6 +31,7 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "TaskbarPickerKt"
+        jvmArgs += listOf("-Xms16m", "-Xmx256m", "-XX:+UseSerialGC", "-XX:CICompilerCount=2")
         nativeDistributions {
             packageName = "TaskbarLabelPicker"
             modules("jdk.accessibility")

@@ -74,6 +74,9 @@ import java.awt.EventQueue
 import java.awt.Frame
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
+import com.lixing.update.LixingUpdater
 import java.awt.SystemTray
 import java.awt.TrayIcon
 import java.awt.RenderingHints
@@ -370,8 +373,7 @@ private data class AutostartState(
 
 private fun bringPickerToFront() {
     EventQueue.invokeLater {
-        Frame.getFrames().firstOrNull { it.title == PICKER_WINDOW_TITLE }?.let { frame ->
-            if (!frame.isVisible) frame.isVisible = true
+        Frame.getFrames().firstOrNull { it.title == PICKER_WINDOW_TITLE && it.isShowing }?.let { frame ->
             frame.toFront()
             frame.requestFocus()
         }
@@ -1100,7 +1102,6 @@ private fun TaskbarPickerApplication(
     val autostartChanges = remember { Channel<Boolean>(Channel.UNLIMITED) }
     val autoNewChanges = remember { Channel<Boolean>(Channel.UNLIMITED) }
     val bridge = remember { TaskbarBridge() }
-    val logo = remember { PickerIcon.load() }
     var snapshot by remember { mutableStateOf(Snapshot()) }
     var scanReadError by remember { mutableStateOf<String?>(null) }
     var statusReadError by remember { mutableStateOf<String?>(null) }
@@ -1121,8 +1122,12 @@ private fun TaskbarPickerApplication(
     var helpVisible by remember { mutableStateOf(false) }
     var supportVisible by remember { mutableStateOf(false) }
     var updateVisible by remember { mutableStateOf(false) }
-    val updater = remember(installation) { if (installation != null) packagedUpdater() else null }
-    val updateState by remember(updater) { updater?.state ?: MutableStateFlow(JsonObject(emptyMap())) }.collectAsState()
+    val createUpdater = remember(installation) { if (installation != null) packagedUpdaterFactory() else null }
+    var updater by remember(createUpdater) { mutableStateOf<LixingUpdater?>(null) }
+    var lastUpdateCheck by remember(createUpdater) { mutableStateOf(JsonObject(emptyMap())) }
+    val idleUpdateState = remember { MutableStateFlow(JsonObject(emptyMap())) }
+    val pendingUpdateState by (updater?.state ?: idleUpdateState).collectAsState()
+    val updateState = if (updater == null) lastUpdateCheck else pendingUpdateState
     val updateVersion = availableUpdate(updateState)
     val updateScope = rememberCoroutineScope()
     val updatePreference = remember { TaskbarProfile.directory.resolve("auto-update.dat") }
@@ -1131,25 +1136,37 @@ private fun TaskbarPickerApplication(
     var updateError by remember { mutableStateOf<String?>(null) }
     var automaticAttempt by remember { mutableStateOf<String?>(null) }
     suspend fun update(action: String): Boolean {
-        val service = updater ?: return false
         if (updateBusy) return false
+        val service = updater ?: createUpdater?.invoke()?.also { updater = it } ?: return false
+        val checking = action == "check"
+        var keepSession = !checking
+        if (checking) lastUpdateCheck = JsonObject(emptyMap())
         updateBusy = true
         updateError = null
         try {
             val response = service.request(action)
-            if (!response.flag("ok")) updateError = response.text("error") ?: "更新操作失败"
-            return response.flag("ok")
+            val ok = response.flag("ok")
+            if (!ok) updateError = response.text("error") ?: "更新操作失败"
+            if (checking && ok) {
+                lastUpdateCheck = response["state"] as? JsonObject ?: service.state.value
+                keepSession = lastUpdateCheck.flag("canSetup")
+            }
+            return ok
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             updateError = failure.message ?: "更新服务暂不可用"
             return false
         } finally {
+            if (!keepSession) {
+                service.close()
+                updater = null
+            }
             updateBusy = false
         }
     }
-    DisposableEffect(updater) { onDispose { updater?.close() } }
-    LaunchedEffect(updater) { if (updater != null) update("check") }
+    DisposableEffect(createUpdater) { onDispose { updater?.close() } }
+    LaunchedEffect(createUpdater) { if (createUpdater != null) update("check") }
     LaunchedEffect(updateVersion, automaticUpdate, updateBusy) {
         val version = updateVersion ?: return@LaunchedEffect
         if (automaticUpdate && !updateBusy && updateState.flag("canSetup") && automaticAttempt != version) {
@@ -1495,18 +1512,34 @@ private fun TaskbarPickerApplication(
         updateVersion = updateVersion,
     )
 
-    Window(
+    val pickerWindowState = rememberWindowState(width = 640.dp, height = 650.dp)
+    val logo = if (windowVisible) remember { PickerIcon.load() } else null
+    if (logo != null) Window(
         onCloseRequest = {
             windowVisible = false
             helpVisible = false
             supportVisible = false
             updateVisible = false
         },
-        visible = windowVisible,
         title = PICKER_WINDOW_TITLE,
         icon = androidx.compose.ui.graphics.painter.BitmapPainter(logo),
-        state = rememberWindowState(width = 640.dp, height = 650.dp),
+        state = pickerWindowState,
     ) {
+        DisposableEffect(window) {
+            val frame = window
+            fun activate() {
+                if (frame.isShowing) {
+                    frame.toFront()
+                    frame.requestFocus()
+                }
+            }
+            val onOpened = object : WindowAdapter() {
+                override fun windowOpened(event: WindowEvent) = activate()
+            }
+            frame.addWindowListener(onOpened)
+            EventQueue.invokeLater { activate() }
+            onDispose { frame.removeWindowListener(onOpened) }
+        }
         LixingTheme {
             LixingChoiceHost {
                 Picker(
@@ -1527,7 +1560,7 @@ private fun TaskbarPickerApplication(
                     onOpenHelp = { helpVisible = true },
                     onOpenSupport = { supportVisible = true },
                     updateLabel = if (updateVersion != null) "有更新" else "版本",
-                    onOpenUpdate = if (updater != null) { { updateVisible = true } } else null,
+                    onOpenUpdate = if (createUpdater != null) { { updateVisible = true } } else null,
                     cleanupSelectionMode = cleanupSelectionMode,
                     selectedCleanupKeys = selectedCleanupKeys,
                     cleanupChanging = cleanupChanging,
@@ -1560,8 +1593,10 @@ private fun TaskbarPickerApplication(
         visible = helpVisible && windowVisible,
         onClose = { helpVisible = false },
     )
-    SupportDevelopmentWindow(visible = supportVisible && windowVisible, logo = logo, onClose = { supportVisible = false })
-    if (updater != null) TaskbarUpdateWindow(
+    if (logo != null && supportVisible) {
+        SupportDevelopmentWindow(visible = true, logo = logo, onClose = { supportVisible = false })
+    }
+    if (logo != null && createUpdater != null) TaskbarUpdateWindow(
         visible = updateVisible && windowVisible,
         logo = logo,
         state = updateState,
@@ -2017,12 +2052,13 @@ private fun TaskbarHelpWindow(
     visible: Boolean,
     onClose: () -> Unit,
 ) {
+    val windowState = rememberWindowState(width = 500.dp, height = 390.dp)
+    if (!visible) return
     val logo = remember { PickerIcon.load() }
     Window(
         onCloseRequest = onClose,
-        visible = visible,
         title = "任务栏标签说明",
-        state = rememberWindowState(width = 500.dp, height = 390.dp),
+        state = windowState,
         icon = androidx.compose.ui.graphics.painter.BitmapPainter(logo),
     ) {
         LixingTheme {

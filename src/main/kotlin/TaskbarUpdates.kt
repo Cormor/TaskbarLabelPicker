@@ -39,12 +39,12 @@ internal fun availableUpdate(state: JsonObject): String? =
         (state["release"] as? JsonObject)?.text("version")
     } else null
 
-internal fun packagedUpdater(): LixingUpdater? {
+internal fun packagedUpdaterFactory(): (() -> LixingUpdater)? {
     val resources = System.getProperty("compose.application.resources.dir") ?: return null
     val update = Path.of(resources, "update")
     val config = update.resolve("release-config.json")
     return if (Files.isRegularFile(config) && Files.isRegularFile(update.resolve("node.exe"))) {
-        LixingUpdater(update, config)
+        { LixingUpdater(update, config) }
     } else null
 }
 
@@ -70,11 +70,12 @@ internal fun TaskbarUpdateWindow(
     onAction: (String) -> Unit,
     onClose: () -> Unit,
 ) {
+    val windowState = rememberWindowState(width = 510.dp, height = 450.dp)
+    if (!visible) return
     Window(
         onCloseRequest = onClose,
-        visible = visible,
         title = "任务栏标签更新",
-        state = rememberWindowState(width = 510.dp, height = 450.dp),
+        state = windowState,
         icon = BitmapPainter(logo),
     ) {
         LixingTheme {
