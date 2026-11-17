@@ -180,12 +180,9 @@ internal static class TaskbarBridge
     const uint TaskbarSignal = 0x8001;
     const uint SettingsSignal = 0x8002;
     const uint RebindSignal = 0x8003;
+    const uint WindowDestroyed = 0x8001;
     static uint eventThread;
     static int taskbarPending, settingsPending, rebindPending;
-    static readonly Dictionary<IntPtr, AutomationElement> subscriptions = new Dictionary<IntPtr, AutomationElement>();
-    static readonly StructureChangedEventHandler StructureChangedHandler = OnTaskbarStructureChanged;
-    static readonly AutomationPropertyChangedEventHandler PropertyChangedHandler = OnTaskbarPropertyChanged;
-
     static bool IsTaskbarWindow(IntPtr window)
     {
         var name = new StringBuilder(64);
@@ -201,72 +198,6 @@ internal static class TaskbarBridge
             Interlocked.Exchange(ref pending, 0);
     }
 
-    static void OnTaskbarStructureChanged(object sender, StructureChangedEventArgs args)
-    {
-        if (args.StructureChangeType == StructureChangeType.ChildAdded)
-            RecordVisibleButton(sender as AutomationElement);
-        Signal(TaskbarSignal, ref taskbarPending);
-    }
-
-    static void OnTaskbarPropertyChanged(object sender, AutomationPropertyChangedEventArgs args)
-    {
-        var item = sender as AutomationElement;
-        if (item == null) return;
-        try
-        {
-            string itemClass;
-            try { itemClass = item.Cached.ClassName; }
-            catch (InvalidOperationException) { itemClass = item.Current.ClassName; }
-            if (itemClass == ButtonClass)
-            {
-                if (args.Property == AutomationElement.IsOffscreenProperty && Object.Equals(args.NewValue, false))
-                    RecordVisibleButton(item);
-                Signal(TaskbarSignal, ref taskbarPending);
-            }
-        }
-        catch (ElementNotAvailableException) { }
-    }
-
-    static void RebindTaskbarEvents()
-    {
-        var current = new HashSet<IntPtr>();
-        EnumWindows((window, unused) =>
-        {
-            if (IsTaskbarWindow(window)) current.Add(window);
-            return true;
-        }, IntPtr.Zero);
-
-        foreach (IntPtr removed in subscriptions.Keys.Where(window => !current.Contains(window)).ToArray())
-        {
-            AutomationElement root = subscriptions[removed];
-            try { Automation.RemoveStructureChangedEventHandler(root, StructureChangedHandler); }
-            catch (ElementNotAvailableException) { }
-            try { Automation.RemoveAutomationPropertyChangedEventHandler(root, PropertyChangedHandler); }
-            catch (ElementNotAvailableException) { }
-            subscriptions.Remove(removed);
-        }
-
-        var cache = new CacheRequest();
-        cache.Add(AutomationElement.ClassNameProperty);
-        cache.Add(AutomationElement.AutomationIdProperty);
-        cache.Add(AutomationElement.IsOffscreenProperty);
-        foreach (IntPtr window in current.Where(window => !subscriptions.ContainsKey(window)))
-        {
-            try
-            {
-                var root = AutomationElement.FromHandle(window);
-                using (cache.Activate())
-                {
-                    Automation.AddStructureChangedEventHandler(root, TreeScope.Subtree, StructureChangedHandler);
-                    Automation.AddAutomationPropertyChangedEventHandler(root, TreeScope.Subtree,
-                        PropertyChangedHandler, AutomationElement.NameProperty, AutomationElement.IsOffscreenProperty);
-                }
-                subscriptions.Add(window, root);
-            }
-            catch (ElementNotAvailableException) { }
-        }
-    }
-
     static void HandleStatePath(string name)
     {
         if (IdentityComparer.Equals(name, "aliases.dat"))
@@ -279,7 +210,25 @@ internal static class TaskbarBridge
 
     static void WatchEvents()
     {
-        output = new StreamWriter(Console.OpenStandardOutput(), Utf8) { AutoFlush = true };
+        try
+        {
+            using (output = new StreamWriter(Console.OpenStandardOutput(), Utf8) { AutoFlush = true })
+            using (var automation = new TaskbarAutomationEvents(ButtonClass, RecordVisibleButton,
+                () => Signal(TaskbarSignal, ref taskbarPending)))
+            {
+                RunEventLoop(automation);
+            }
+        }
+        catch (Exception failure)
+        {
+            using (var error = new StreamWriter(Console.OpenStandardError(), Utf8))
+                error.WriteLine(failure);
+            Environment.ExitCode = 1;
+        }
+    }
+
+    static void RunEventLoop(TaskbarAutomationEvents automation)
+    {
         eventThread = GetCurrentThreadId();
         Message message;
         PeekMessage(out message, IntPtr.Zero, 0, 0, 0); // Initialize the WinEvent thread's message queue.
@@ -290,57 +239,88 @@ internal static class TaskbarBridge
             PostThreadMessage(eventThread, 0x0012, IntPtr.Zero, IntPtr.Zero); // WM_QUIT
         }) { IsBackground = true };
         parent.Start();
+
+        var destroyed = new HashSet<IntPtr>();
         WinEventProc onWindow = (hook, kind, window, objectId, childId, thread, time) =>
         {
-            if (window != IntPtr.Zero && objectId == 0 && childId == 0 &&
-                (IsTaskbarWindow(window) || subscriptions.ContainsKey(window)))
-                Signal(RebindSignal, ref rebindPending);
+            if (window == IntPtr.Zero || objectId != 0 || childId != 0) return;
+            bool subscribed = automation.Contains(window);
+            if (!subscribed && !IsTaskbarWindow(window)) return;
+            if (subscribed && kind == WindowDestroyed) destroyed.Add(window);
+            Signal(RebindSignal, ref rebindPending);
         };
         IntPtr hookHandle = SetWinEventHook(0x8000, 0x8003, IntPtr.Zero, onWindow, 0, 0, 2);
-        Directory.CreateDirectory(ProfileDirectory);
-        using (var watcher = new FileSystemWatcher(ProfileDirectory))
+        if (hookHandle == IntPtr.Zero) throw new Win32Exception();
+        try
         {
-            watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite;
-            watcher.Created += (sender, args) => HandleStatePath(args.Name);
-            watcher.Changed += (sender, args) => HandleStatePath(args.Name);
-            watcher.Deleted += (sender, args) => HandleStatePath(args.Name);
-            watcher.Renamed += (sender, args) =>
+            Directory.CreateDirectory(ProfileDirectory);
+            using (var watcher = new FileSystemWatcher(ProfileDirectory))
             {
-                HandleStatePath(args.OldName);
-                HandleStatePath(args.Name);
-            };
-            watcher.Error += (sender, args) =>
-            {
-                Signal(TaskbarSignal, ref taskbarPending);
-                Signal(SettingsSignal, ref settingsPending);
-            };
-            watcher.EnableRaisingEvents = true;
-            RebindTaskbarEvents();
-            Emit("READY");
-            while (GetMessage(out message, IntPtr.Zero, 0, 0) > 0)
-            {
-                switch (message.Id)
+                watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite;
+                watcher.Created += (sender, args) => HandleStatePath(args.Name);
+                watcher.Changed += (sender, args) => HandleStatePath(args.Name);
+                watcher.Deleted += (sender, args) => HandleStatePath(args.Name);
+                watcher.Renamed += (sender, args) =>
                 {
-                    case RebindSignal:
-                        Interlocked.Exchange(ref rebindPending, 0);
-                        RebindTaskbarEvents();
-                        Signal(TaskbarSignal, ref taskbarPending);
-                        Signal(SettingsSignal, ref settingsPending);
-                        break;
-                    case TaskbarSignal:
-                        Interlocked.Exchange(ref taskbarPending, 0);
-                        Emit("EVENT", "taskbar");
-                        break;
-                    case SettingsSignal:
-                        Interlocked.Exchange(ref settingsPending, 0);
-                        Emit("EVENT", "state");
-                        break;
+                    HandleStatePath(args.OldName);
+                    HandleStatePath(args.Name);
+                };
+                watcher.Error += (sender, args) =>
+                {
+                    Signal(TaskbarSignal, ref taskbarPending);
+                    Signal(SettingsSignal, ref settingsPending);
+                };
+                watcher.EnableRaisingEvents = true;
+                RebindTaskbarEvents(automation, destroyed);
+                Emit("READY");
+                int result;
+                while ((result = GetMessage(out message, IntPtr.Zero, 0, 0)) > 0)
+                {
+                    if (message.Window != IntPtr.Zero)
+                    {
+                        DispatchMessage(ref message);
+                        continue;
+                    }
+
+                    switch (message.Id)
+                    {
+                        case RebindSignal:
+                            Interlocked.Exchange(ref rebindPending, 0);
+                            RebindTaskbarEvents(automation, destroyed);
+                            Signal(TaskbarSignal, ref taskbarPending);
+                            Signal(SettingsSignal, ref settingsPending);
+                            break;
+                        case TaskbarSignal:
+                            Interlocked.Exchange(ref taskbarPending, 0);
+                            Emit("EVENT", "taskbar");
+                            break;
+                        case SettingsSignal:
+                            Interlocked.Exchange(ref settingsPending, 0);
+                            Emit("EVENT", "state");
+                            break;
+                    }
                 }
+                if (result < 0) throw new Win32Exception();
             }
         }
-        if (hookHandle != IntPtr.Zero) UnhookWinEvent(hookHandle);
-        Automation.RemoveAllEventHandlers();
-        GC.KeepAlive(onWindow);
+        finally
+        {
+            UnhookWinEvent(hookHandle);
+            GC.KeepAlive(onWindow);
+        }
+    }
+
+    static void RebindTaskbarEvents(TaskbarAutomationEvents automation, HashSet<IntPtr> destroyed)
+    {
+        var windows = new HashSet<IntPtr>();
+        EnumWindows((window, unused) =>
+        {
+            if (IsTaskbarWindow(window)) windows.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        var retired = new HashSet<IntPtr>(destroyed);
+        destroyed.Clear();
+        automation.Rebind(windows, retired);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -356,9 +336,10 @@ internal static class TaskbarBridge
     delegate void WinEventProc(IntPtr hook, uint kind, IntPtr window, int objectId, int childId, uint thread, uint time);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool PostThreadMessage(uint thread, uint id, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetMessage(out Message value, IntPtr window, uint minimum, uint maximum);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern int GetMessage(out Message value, IntPtr window, uint minimum, uint maximum);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool PeekMessage(out Message value, IntPtr window, uint minimum, uint maximum, uint remove);
-    [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint minimum, uint maximum, IntPtr module, WinEventProc callback, uint process, uint thread, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DispatchMessage(ref Message value);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWinEventHook(uint minimum, uint maximum, IntPtr module, WinEventProc callback, uint process, uint thread, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
 
     static void Emit(params string[] fields)
@@ -1313,18 +1294,14 @@ internal static class TaskbarBridge
         }
     }
 
-    static void RecordVisibleButton(AutomationElement element)
+    static void RecordVisibleButton(string automationId)
     {
-        if (element == null) return;
         try
         {
-            // ChildAdded identifies the actual new button when the provider
-            // emits an individual event. Read cached evidence before the next
-            // snapshot so an already removed button can still be retained.
-            var observed = element.Cached;
-            if (observed.ClassName != ButtonClass || observed.IsOffscreen) return;
+            // Record a cached button appearance before signaling the next snapshot,
+            // so a short-lived button can still leave a history entry.
             var aliases = ReadAliases();
-            var button = ResolveButton(observed.AutomationId ?? "", aliases, new Dictionary<uint, string>());
+            var button = ResolveButton(automationId, aliases, new Dictionary<uint, string>());
             if (!IsStableKey(button.Identity) || button.KnownPinnedOnly) return;
             string path = button.Path;
             if (String.IsNullOrEmpty(path) && button.ProcessKey.StartsWith("path:", StringComparison.Ordinal))
@@ -1338,7 +1315,6 @@ internal static class TaskbarBridge
                 Windows = new HashSet<string>(ObservedWindows(button, aliases), IdentityComparer)
             });
         }
-        catch (ElementNotAvailableException) { }
         catch (InvalidOperationException) { }
         catch (UnauthorizedAccessException) { }
         catch (IOException) { }

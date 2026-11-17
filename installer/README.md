@@ -9,7 +9,7 @@ python3 vendor/lixing-update/package-sidecar.py --output resources/windows-x64/u
 cp release-config.json resources/windows-x64/update/
 ```
 
-配置器构建使用 JDK 21、Gradle 9.6.0 与 Windows x64 .NET Framework 4.x。版本以 `build.gradle.kts`、`release-config.json` 和原生模块元数据一致为准。无需公司私有路径即可从公开快照执行上述命令。准备 Windows 载荷时不要加入本机规则与历史；默认省略 `--symbol-cache`，安装后由 Windows 符号服务按需解析。
+配置器构建使用 JDK 21、Gradle 9.6.0 与 Windows x64 .NET Framework 4.x。应用发行版本应在 `build.gradle.kts` 和 `release-config.json` 中保持一致。Windhawk 模块按其源码的 `@version` 独立版本化。无需公司私有路径即可从公开快照执行上述命令。准备 Windows 载荷时不要加入本机规则与历史；默认省略 `--symbol-cache`，安装后由 Windows 符号服务按需解析。
 
 在 WSL 运行 `PreparePayload.py`，传入以下文件和目录。
 
@@ -26,9 +26,9 @@ cp release-config.json resources/windows-x64/update/
 使用 NSIS 3.x 将载荷编成单个安装程序。
 
 ```sh
-makensis -WX -DVERSION=0.1.7 \
+makensis -WX -DVERSION=0.1.8 \
   -DPAYLOAD=/absolute/path/to/payload \
-  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.7-x64-Setup.exe \
+  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.8-x64-Setup.exe \
   TaskbarLabelPicker.nsi
 ```
 

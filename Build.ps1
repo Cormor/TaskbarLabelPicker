@@ -22,7 +22,8 @@ $cscArgs = @(
     "/reference:$framework/WPF\UIAutomationTypes.dll",
     "/reference:$framework/WPF\WindowsBase.dll",
     "$PSScriptRoot/installer\ProfileLocation.cs",
-    "$PSScriptRoot/native\TaskbarBridge.cs"
+    "$PSScriptRoot/native\TaskbarBridge.cs",
+    "$PSScriptRoot/native\TaskbarAutomationEvents.cs"
 )
 & (Join-Path $framework "csc.exe") @cscArgs
 if ($LASTEXITCODE) { throw "Compiling TaskbarBridge.exe failed." }

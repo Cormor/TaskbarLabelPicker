@@ -21,12 +21,12 @@
 
 ## 安装和使用
 
-- 双击 `TaskbarLabelPicker-0.1.7-x64-Setup.exe` 安装到当前 Windows 用户。从开始菜单搜索「任务栏标签」打开配置器。安装包固定安装到当前用户的 `%LOCALAPPDATA%\Programs\TaskbarLabelPicker`，包含应用运行时和专用 Windhawk 后台。目标平台为 Windows 11 x64，本机实测 25H2（26200.7623）。
+- 双击 `TaskbarLabelPicker-0.1.8-x64-Setup.exe` 安装到当前 Windows 用户。从开始菜单搜索「任务栏标签」打开配置器。安装包固定安装到当前用户的 `%LOCALAPPDATA%\Programs\TaskbarLabelPicker`，包含应用运行时和专用 Windhawk 后台。目标平台为 Windows 11 x64，本机实测 25H2（26200.7623）。
 - 登录启动初始关闭。可在安装界面选择，也可在配置器内切换「登录 Windows 时启动」。配置器以当前运行目录与系统已安装应用登记一致为依据，并读回这个应用的实际启动登记。开启后登录只启动到托盘，双击托盘图标或从开始菜单打开设置。
 - 从配置器点「支持开发」查看自愿支持入口。点「版本」可检查签名更新、查看变更和安装。自动安装默认关闭。
 - 右键托盘图标可查看状态、打开配置器或退出配置器。需要停用模块时，使用 Windows「设置 → 应用 → 已安装的应用 → 任务栏标签」卸载。
 - 在相同用户下直接运行新版安装包可升级。设置与历史分别放在 `%USERPROFILE%\.lixing\TaskbarLabelPicker\rules.dat` 和同目录 `history`。首次启动时迁移旧版设置和历史，保留旧目录以供回退；升级和卸载保留现用目录。历史保存应用名称、图标、身份和最后打开时间。
-- 若本机已运行其他 Windhawk 实例，关闭该实例后再从开始菜单启动。应用需要与当前 Windows 版本匹配的任务栏符号；安装包已缓存本机实测版本，其他支持的更新版本首次可能需要从 Microsoft 符号服务器获取。
+- 若本机已运行其他 Windhawk 实例，关闭该实例后再从开始菜单启动。应用需要与当前 Windows 版本匹配的任务栏符号；首次启动时可能按需从 Microsoft 符号服务器获取。
 
 ## 构建
 
@@ -65,9 +65,9 @@ if ($manifest.appId -cne 'TaskbarLabelPicker' -or $manifest.repo -cne 'Cormor/Ta
     $manifest.platform -cne 'win32' -or $manifest.arch -cne 'x64' -or $manifest.channel -cne 'stable') {
     throw '发布目标不匹配'
 }
-$setup = '.\TaskbarLabelPicker-0.1.7-x64-Setup.exe'
+$setup = '.\TaskbarLabelPicker-0.1.8-x64-Setup.exe'
 $item = @($manifest.artifacts | Where-Object { $_.kind -eq 'setup' -and $_.name -ceq (Split-Path -Leaf $setup) })
-if ($manifest.version -cne '0.1.7' -or $item.Count -ne 1 -or
+if ($manifest.version -cne '0.1.8' -or $item.Count -ne 1 -or
     (Get-Item $setup).Length -ne $item[0].size -or (Get-FileHash $setup).Hash -ine $item[0].sha256) {
     throw '安装包版本、大小或摘要不匹配'
 }
