@@ -291,7 +291,10 @@ private data class OfficialInstallation(val launcher: Path) {
         invoke(if (enabled) "--autostart-enable" else "--autostart-disable")
 
     private fun invoke(argument: String): AutostartState = try {
-        val process = ProcessBuilder(launcher.toString(), argument).start()
+        val executable = launcher.toRealPath()
+        val process = ProcessBuilder(executable.toString(), argument)
+            .directory(executable.parent.toFile())
+            .start()
         val diagnostics = ChildProcessDiagnostics(process, "launcher")
         process.outputStream.close()
         if (!process.waitFor(10, TimeUnit.SECONDS)) {
@@ -305,7 +308,13 @@ private data class OfficialInstallation(val launcher: Path) {
         } else {
             val result = process.inputStream.bufferedReader(Charsets.UTF_8).readLine()?.trim()
             when {
-                result == "unavailable" -> AutostartState(AutostartState.Value.UNAVAILABLE)
+                result == "unavailable" || result?.startsWith("unavailable\t") == true -> {
+                    val reason = result.substringAfter('\t', "unspecified")
+                    TaskbarDiagnostics.record("登录启动安装检查：$reason")
+                    val value = if (reason.endsWith("identity-unavailable")) AutostartState.Value.ERROR
+                                else AutostartState.Value.UNAVAILABLE
+                    AutostartState(value, reason)
+                }
                 result == "foreign" -> AutostartState(AutostartState.Value.FOREIGN)
                 result == "enabled" -> AutostartState(AutostartState.Value.ENABLED)
                 result == "disabled" -> AutostartState(AutostartState.Value.DISABLED)
@@ -354,6 +363,11 @@ private data class OfficialInstallation(val launcher: Path) {
                     .equals(right.toAbsolutePath().normalize().toString(), ignoreCase = true),
             )
     }
+}
+
+private sealed interface AutostartRequest {
+    data object Read : AutostartRequest
+    data class Set(val enabled: Boolean) : AutostartRequest
 }
 
 private data class AutostartState(
@@ -452,7 +466,6 @@ private sealed interface PickerAction {
     data class SignalReceived(val signal: BridgeSignal) : PickerAction
     data class EventBatch(val mask: Int) : PickerAction
     data class InstanceCommandReceived(val command: AppInstanceCommand) : PickerAction
-    data class AutostartChangeRequested(val enabled: Boolean) : PickerAction
     data class AutoNewChangeRequested(val enabled: Boolean) : PickerAction
     data class CleanupRequested(val identities: List<String>) : PickerAction
 }
@@ -1099,7 +1112,7 @@ private fun TaskbarPickerApplication(
     val cleanupRequests = remember { Channel<List<String>>(Channel.UNLIMITED) }
     val signals = remember { Channel<BridgeSignal>(Channel.UNLIMITED) }
     val eventWakeups = remember { Channel<Unit>(Channel.CONFLATED) }
-    val autostartChanges = remember { Channel<Boolean>(Channel.UNLIMITED) }
+    val autostartRequests = remember { Channel<AutostartRequest>(Channel.UNLIMITED) }
     val autoNewChanges = remember { Channel<Boolean>(Channel.UNLIMITED) }
     val bridge = remember { TaskbarBridge() }
     var snapshot by remember { mutableStateOf(Snapshot()) }
@@ -1184,7 +1197,26 @@ private fun TaskbarPickerApplication(
     val tray = trayPresentation(snapshot, trayError)
 
     LaunchedEffect(windowVisible) {
+        if (windowVisible && installation != null) autostartRequests.send(AutostartRequest.Read)
         signals.send(BridgeSignal.VisibilityChanged)
+    }
+
+    LaunchedEffect(installation, autostartRequests) {
+        if (installation == null) return@LaunchedEffect
+        for (request in autostartRequests) {
+            autostartChanging = true
+            autostartState = AutostartState(AutostartState.Value.LOADING)
+            try {
+                autostartState = withContext(Dispatchers.IO) {
+                    when (request) {
+                        AutostartRequest.Read -> installation.queryAutostart()
+                        is AutostartRequest.Set -> installation.setAutostart(request.enabled)
+                    }
+                }
+            } finally {
+                autostartChanging = false
+            }
+        }
     }
 
     DisposableEffect(bridge) {
@@ -1193,7 +1225,7 @@ private fun TaskbarPickerApplication(
             cleanupRequests.close()
             signals.close()
             eventWakeups.close()
-            autostartChanges.close()
+            autostartRequests.close()
             autoNewChanges.close()
             bridge.close()
         }
@@ -1298,45 +1330,6 @@ private fun TaskbarPickerApplication(
             }
         }
 
-        suspend fun refreshAutostartSafely(force: Boolean = false) {
-            val currentInstallation = installation
-            if (currentInstallation == null) {
-                autostartState = AutostartState(AutostartState.Value.UNAVAILABLE)
-                return
-            }
-            if (!force && autostartState.value != AutostartState.Value.LOADING) return
-            autostartChanging = true
-            autostartState = AutostartState(AutostartState.Value.LOADING)
-            try {
-                autostartState = withContext(Dispatchers.IO) { currentInstallation.queryAutostart() }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                autostartState = AutostartState(AutostartState.Value.ERROR, failure.message ?: "读取失败")
-            } finally {
-                autostartChanging = false
-            }
-        }
-
-        suspend fun setAutostartSafely(enabled: Boolean) {
-            val currentInstallation = installation
-            if (currentInstallation == null) {
-                autostartState = AutostartState(AutostartState.Value.UNAVAILABLE)
-                autostartChanging = false
-                return
-            }
-            autostartState = AutostartState(AutostartState.Value.LOADING)
-            try {
-                autostartState = withContext(Dispatchers.IO) { currentInstallation.setAutostart(enabled) }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                autostartState = AutostartState(AutostartState.Value.ERROR, failure.message ?: "设置失败")
-            } finally {
-                autostartChanging = false
-            }
-        }
-
         suspend fun setAutoNewSafely(enabled: Boolean) {
             autoNewChanging = true
             try {
@@ -1426,7 +1419,6 @@ private fun TaskbarPickerApplication(
                     signals.onReceive { PickerAction.SignalReceived(it) }
                     eventWakeups.onReceive { PickerAction.EventBatch(pendingBridgeEvents.getAndSet(0)) }
                     commands.onReceive { PickerAction.InstanceCommandReceived(it) }
-                    autostartChanges.onReceive { PickerAction.AutostartChangeRequested(it) }
                     autoNewChanges.onReceive { PickerAction.AutoNewChangeRequested(it) }
                     cleanupRequests.onReceive { PickerAction.CleanupRequested(it) }
                 }) {
@@ -1450,10 +1442,8 @@ private fun TaskbarPickerApplication(
                             ready = true
                             eventError = null
                             refreshSafely(includeItems = true, forceHistory = true)
-                            if (visibilityState.value) refreshAutostartSafely()
                         }
                         BridgeSignal.VisibilityChanged -> {
-                            if (visibilityState.value) refreshAutostartSafely()
                             if (visibilityState.value) {
                                 refreshSafely(includeItems = true, forceHistory = true)
                             } else {
@@ -1472,15 +1462,15 @@ private fun TaskbarPickerApplication(
                     }
                     is PickerAction.InstanceCommandReceived -> when (action.command) {
                         AppInstanceCommand.OPEN -> {
+                            val wasVisible = windowVisible
                             windowVisible = true
                             bringPickerToFront()
+                            if (wasVisible && installation != null) autostartRequests.trySend(AutostartRequest.Read)
                             refreshSafely(includeItems = true, forceHistory = true)
-                            refreshAutostartSafely(force = true)
                         }
                         AppInstanceCommand.TRAY -> Unit
                         AppInstanceCommand.QUIT -> onExit()
                     }
-                    is PickerAction.AutostartChangeRequested -> setAutostartSafely(action.enabled)
                     is PickerAction.AutoNewChangeRequested -> setAutoNewSafely(action.enabled)
                     is PickerAction.CleanupRequested -> removeAppsSafely(action.identities)
                     is PickerAction.EventBatch -> if (ready && action.mask != 0) {
@@ -1548,9 +1538,12 @@ private fun TaskbarPickerApplication(
                     changing = changing,
                     autostartState = autostartState,
                     autostartChanging = autostartChanging,
+                    onRetryAutostart = if (installation != null) {
+                        { autostartRequests.trySend(AutostartRequest.Read) }
+                    } else null,
                     onAutostartChange = { enabled ->
                         autostartChanging = true
-                        if (autostartChanges.trySend(enabled).isFailure) autostartChanging = false
+                        if (autostartRequests.trySend(AutostartRequest.Set(enabled)).isFailure) autostartChanging = false
                     },
                     autoNewChanging = autoNewChanging,
                     onAutoNewChange = { enabled ->
@@ -1735,6 +1728,7 @@ private fun Picker(
     changing: Boolean,
     autostartState: AutostartState,
     autostartChanging: Boolean,
+    onRetryAutostart: (() -> Unit)?,
     onAutostartChange: (Boolean) -> Unit,
     autoNewChanging: Boolean,
     onAutoNewChange: (Boolean) -> Unit,
@@ -1851,7 +1845,7 @@ private fun Picker(
             Column(Modifier.weight(1f)) {
                 val autostartDetail = when (autostartState.value) {
                     AutostartState.Value.LOADING -> "正在读取设置…"
-                    AutostartState.Value.UNAVAILABLE -> "请从正式安装启动后设置"
+                    AutostartState.Value.UNAVAILABLE -> "无法确认当前安装"
                     AutostartState.Value.ENABLED -> "已设置登录时启动"
                     AutostartState.Value.DISABLED -> "未设置登录启动"
                     AutostartState.Value.FOREIGN -> "已有其他登录启动设置"
@@ -1871,8 +1865,14 @@ private fun Picker(
                         enabled = autostartState.toggleEnabled && !autostartChanging,
                     )
                 }
-                BasicText(autostartDetail, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 10.sp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    BasicText(autostartDetail, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 10.sp))
+                    if (onRetryAutostart != null && (autostartState.value == AutostartState.Value.ERROR ||
+                            autostartState.value == AutostartState.Value.UNAVAILABLE)) {
+                        LixingButton("重试", onRetryAutostart, variant = ButtonVariant.Quiet)
+                    }
+                }
             }
             Column(Modifier.weight(1f)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

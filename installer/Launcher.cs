@@ -1,11 +1,13 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 
 internal static class Launcher
 {
@@ -16,7 +18,7 @@ internal static class Launcher
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string App = Path.Combine(Root, @"app\TaskbarLabelPicker.exe");
     static readonly string Host = Path.Combine(Root, @"runtime\Windhawk\windhawk.exe");
-    static readonly string Startup = Quote(Path.Combine(Root, "TaskbarLabelPickerLauncher.exe")) + " --tray";
+    const string LauncherName = "TaskbarLabelPickerLauncher.exe";
 
     [STAThread]
     static int Main(string[] args)
@@ -73,24 +75,30 @@ internal static class Launcher
         if (action != "--autostart-status" && action != "--autostart-enable" &&
             action != "--autostart-disable") return 2;
 
-        if (!IsRegisteredInstallation())
+        string registered;
+        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey))
+            registered = key == null ? null : key.GetValue("InstallLocation", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+
+        string issue = InstallationIssue(Root, registered);
+        if (issue != null)
         {
-            ReportAutostart("unavailable");
+            ReportAutostart("unavailable" + "\t" + issue);
             return action == "--autostart-status" ? 0 : 4;
         }
 
+        string startup = Quote(Path.Combine(registered, LauncherName)) + " --tray";
         string state;
         bool enable = action == "--autostart-enable";
         using (var key = enable ? Registry.CurrentUser.CreateSubKey(RunKey)
                                 : Registry.CurrentUser.OpenSubKey(RunKey, action != "--autostart-status"))
         {
             var value = key == null ? null : key.GetValue(RunName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-            bool owned = String.Equals(value as string, Startup, StringComparison.OrdinalIgnoreCase);
+            bool owned = String.Equals(value as string, startup, StringComparison.OrdinalIgnoreCase);
             if (value != null && !owned)
                 state = "foreign";
             else if (action == "--autostart-enable" && !owned)
             {
-                key.SetValue(RunName, Startup, RegistryValueKind.String);
+                key.SetValue(RunName, startup, RegistryValueKind.String);
                 state = "enabled";
             }
             else if (action == "--autostart-disable" && owned)
@@ -105,23 +113,60 @@ internal static class Launcher
         return state == "foreign" && action != "--autostart-status" ? 3 : 0;
     }
 
-    static bool IsRegisteredInstallation()
+    internal static string InstallationIssue(string root, string registered)
     {
-        using (var key = Registry.CurrentUser.OpenSubKey(UninstallKey))
+        if (String.IsNullOrWhiteSpace(registered)) return "missing-registration";
+        if (registered.Length < 3 || registered[1] != ':' || registered[2] != '\\')
+            return "invalid-registration";
+
+        FileIdentity runningDirectory;
+        FileIdentity registeredDirectory;
+        if (!TryGetIdentity(root, out runningDirectory) || !TryGetIdentity(registered, out registeredDirectory))
+            return "directory-identity-unavailable";
+        if (!runningDirectory.Matches(registeredDirectory)) return "different-installation";
+
+        FileIdentity runningLauncher;
+        FileIdentity registeredLauncher;
+        if (!TryGetIdentity(Path.Combine(root, LauncherName), out runningLauncher) ||
+            !TryGetIdentity(Path.Combine(registered, LauncherName), out registeredLauncher))
+            return "launcher-identity-unavailable";
+        if (!runningLauncher.Matches(registeredLauncher)) return "different-launcher";
+        return null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct FileIdentity
+    {
+        public ulong Volume;
+        public ulong IdentifierLow;
+        public ulong IdentifierHigh;
+
+        internal bool Matches(FileIdentity other)
         {
-            if (key == null) return false;
-            var registered = key.GetValue("InstallLocation") as string;
-            if (String.IsNullOrEmpty(registered) ||
-                !String.Equals(Path.GetFullPath(registered).TrimEnd('\\'),
-                               Path.GetFullPath(Root).TrimEnd('\\'),
-                               StringComparison.OrdinalIgnoreCase))
-                return false;
-            string uninstaller = Path.Combine(Root, "Uninstall.exe");
-            return File.Exists(uninstaller) &&
-                String.Equals(key.GetValue("UninstallString") as string, Quote(uninstaller),
-                              StringComparison.OrdinalIgnoreCase);
+            return Volume == other.Volume &&
+                IdentifierLow == other.IdentifierLow && IdentifierHigh == other.IdentifierHigh;
         }
     }
+
+    static bool TryGetIdentity(string path, out FileIdentity identity)
+    {
+        const uint openExisting = 3;
+        const uint shareReadWriteDelete = 7;
+        const uint backupSemantics = 0x02000000;  // Allow handles to directories as well as files.
+        const int fileIdInfo = 18;
+        identity = default(FileIdentity);
+        using (var handle = CreateFile(path, 0, shareReadWriteDelete, IntPtr.Zero, openExisting, backupSemantics, IntPtr.Zero))
+            return !handle.IsInvalid &&
+                GetFileInformationByHandleEx(handle, fileIdInfo, out identity, (uint)Marshal.SizeOf(typeof(FileIdentity)));
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFile(string path, uint access, uint sharing, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileIdentity value, uint size);
 
     static void ReportAutostart(string state)
     {
