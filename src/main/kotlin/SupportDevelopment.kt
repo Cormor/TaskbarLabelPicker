@@ -3,7 +3,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,8 +26,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
-import com.lixing.components.ButtonVariant
-import com.lixing.components.LixingButton
 import com.lixing.components.LixingChoiceHost
 import com.lixing.components.LixingSupportDevelopment
 import com.lixing.components.LixingTheme
@@ -57,18 +54,11 @@ fun SupportDevelopmentWindow(
                             .padding(start = 20.dp, top = 16.dp, bottom = 16.dp, end = 36.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            BasicText(
-                                "支持开发",
-                                Modifier.weight(1f).semantics { heading() },
-                                style = TextStyle(
-                                    color = colors.text,
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                ),
-                            )
-                            LixingButton("关闭", onClose, variant = ButtonVariant.Quiet)
-                        }
+                        BasicText(
+                            "支持开发",
+                            Modifier.semantics { heading() },
+                            style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+                        )
                         LixingSupportDevelopment(Modifier.fillMaxWidth())
                     }
                     VerticalScrollbar(

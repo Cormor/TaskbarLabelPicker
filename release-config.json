@@ -1,7 +1,7 @@
 {
   "appId": "TaskbarLabelPicker",
   "repo": "Cormor/TaskbarLabelPicker",
-  "currentVersion": "0.1.10",
+  "currentVersion": "0.1.12",
   "channel": "stable",
   "platform": "win32",
   "arch": "x64",

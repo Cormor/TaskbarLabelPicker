@@ -1,3 +1,25 @@
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.stateDescription
+import com.lixing.components.ChoiceOption
+import com.lixing.components.LixingSelect
+import com.lixing.components.LixingTextField
+import java.awt.Dimension
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollbarStyle
 import androidx.compose.foundation.VerticalScrollbar
@@ -11,9 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +60,7 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.lixing.components.LixingCheckbox
@@ -72,6 +93,7 @@ import java.util.Locale
 import java.util.LinkedHashMap
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.GraphicsEnvironment
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.WindowAdapter
@@ -385,9 +407,9 @@ private data class AutostartState(
     }
 }
 
-private fun bringPickerToFront() {
+private fun bringWindowToFront(title: String) {
     EventQueue.invokeLater {
-        Frame.getFrames().firstOrNull { it.title == PICKER_WINDOW_TITLE && it.isShowing }?.let { frame ->
+        Frame.getFrames().firstOrNull { it.title == title && it.isShowing }?.let { frame ->
             frame.toFront()
             frame.requestFocus()
         }
@@ -439,6 +461,8 @@ private data class Change(
     val stack: Boolean? = null,
 )
 
+private data class RuleWriteRequest(val changes: List<Change>, val batch: Boolean)
+
 private data class BridgeSnapshot(
     val status: String,
     val appCount: Int?,
@@ -462,7 +486,7 @@ private sealed interface BridgeSignal {
 }
 
 private sealed interface PickerAction {
-    data class ChangeRequested(val change: Change) : PickerAction
+    data class ChangeRequested(val request: RuleWriteRequest) : PickerAction
     data class SignalReceived(val signal: BridgeSignal) : PickerAction
     data class EventBatch(val mask: Int) : PickerAction
     data class InstanceCommandReceived(val command: AppInstanceCommand) : PickerAction
@@ -1108,8 +1132,8 @@ private fun TaskbarPickerApplication(
     commands: Channel<AppInstanceCommand>,
     onExit: () -> Unit,
 ) {
-    val changes = remember { Channel<Change>(Channel.UNLIMITED) }
-    val cleanupRequests = remember { Channel<List<String>>(Channel.UNLIMITED) }
+    val changes = remember { Channel<RuleWriteRequest>(1) }
+    val cleanupRequests = remember { Channel<List<String>>(1) }
     val signals = remember { Channel<BridgeSignal>(Channel.UNLIMITED) }
     val eventWakeups = remember { Channel<Unit>(Channel.CONFLATED) }
     val autostartRequests = remember { Channel<AutostartRequest>(Channel.UNLIMITED) }
@@ -1127,11 +1151,11 @@ private fun TaskbarPickerApplication(
     var cleanupError by remember { mutableStateOf<String?>(null) }
     var cleanupFeedback by remember { mutableStateOf<String?>(null) }
     var cleanupChanging by remember { mutableStateOf(false) }
-    var cleanupSelectionMode by remember { mutableStateOf(false) }
-    var selectedCleanupKeys by remember { mutableStateOf(emptySet<String>()) }
+    var batchFeedback by remember { mutableStateOf<String?>(null) }
     var trayMenuError by remember { mutableStateOf<String?>(null) }
     var eventError by remember { mutableStateOf<String?>(null) }
     var windowVisible by remember { mutableStateOf(initialVisible) }
+    var settingsVisible by remember { mutableStateOf(false) }
     var helpVisible by remember { mutableStateOf(false) }
     var supportVisible by remember { mutableStateOf(false) }
     var updateVisible by remember { mutableStateOf(false) }
@@ -1353,21 +1377,22 @@ private fun TaskbarPickerApplication(
             try {
                 val result = withContext(Dispatchers.IO) { bridge.removeApps(identities) }
                 snapshot = snapshot.copy(appCount = result.appCount)
-                selectedCleanupKeys = emptySet()
-                cleanupSelectionMode = false
                 cleanupFeedback = when {
                     result.removedCount > 0 -> "已清理 ${result.removedCount} 个应用"
                     else -> "所选应用已无可清理记录"
                 }
                 writeError = null
-                refreshSafely(includeItems = true, forceHistory = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                cleanupError = "清理失败，请重试"
+                cleanupError = "清理结果未确认，请检查后重试"
                 TaskbarDiagnostics.record("TaskbarBridge[remove-apps] ${failure.message ?: failure.javaClass.simpleName}")
             } finally {
-                cleanupChanging = false
+                try {
+                    if (isActive) refreshSafely(includeItems = true, forceHistory = true)
+                } finally {
+                    cleanupChanging = false
+                }
             }
         }
 
@@ -1423,19 +1448,30 @@ private fun TaskbarPickerApplication(
                     cleanupRequests.onReceive { PickerAction.CleanupRequested(it) }
                 }) {
                     is PickerAction.ChangeRequested -> {
-                        var saved = false
+                        val request = action.request
+                        var completed = 0
                         try {
-                            withContext(Dispatchers.IO) { bridge.set(action.change) }
-                            writeError = null
-                            saved = true
+                            for (change in request.changes) {
+                                withContext(Dispatchers.IO) { bridge.set(change) }
+                                completed++
+                            }
+                            if (request.batch) batchFeedback = "已保存 $completed 条规则"
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
-                            writeError = "保存失败：${failure.message ?: "请重试"}"
+                            writeError = if (request.batch) {
+                                "已处理 $completed / ${request.changes.size} 条规则，其余设置未确认。请检查后重试。"
+                            } else {
+                                "保存失败：${failure.message ?: "请重试"}"
+                            }
+                            TaskbarDiagnostics.record("TaskbarBridge[set] ${failure.message ?: failure.javaClass.simpleName}")
                         } finally {
-                            changing = false
+                            try {
+                                if (isActive) refreshSafely(includeItems = false, forceHistory = false)
+                            } finally {
+                                changing = false
+                            }
                         }
-                        if (saved) refreshSafely(includeItems = false, forceHistory = false)
                     }
                     is PickerAction.SignalReceived -> when (val signal = action.signal) {
                         BridgeSignal.Ready -> {
@@ -1464,7 +1500,7 @@ private fun TaskbarPickerApplication(
                         AppInstanceCommand.OPEN -> {
                             val wasVisible = windowVisible
                             windowVisible = true
-                            bringPickerToFront()
+                            bringWindowToFront(PICKER_WINDOW_TITLE)
                             if (wasVisible && installation != null) autostartRequests.trySend(AutostartRequest.Read)
                             refreshSafely(includeItems = true, forceHistory = true)
                         }
@@ -1502,11 +1538,30 @@ private fun TaskbarPickerApplication(
         updateVersion = updateVersion,
     )
 
-    val pickerWindowState = rememberWindowState(width = 640.dp, height = 650.dp)
+    fun submitRules(request: RuleWriteRequest) {
+        if (changing || cleanupChanging || request.changes.isEmpty()) return
+        changing = true
+        writeError = null
+        cleanupError = null
+        cleanupFeedback = null
+        batchFeedback = null
+        if (changes.trySend(request).isFailure) {
+            changing = false
+            writeError = "设置未提交，请重试"
+        }
+    }
+
+    val workArea = remember { GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds }
+    val pickerWindowState = rememberWindowState(
+        position = WindowPosition.Aligned(Alignment.Center),
+        width = minOf(760, workArea.width).dp,
+        height = minOf(690, workArea.height).dp,
+    )
     val logo = if (windowVisible) remember { PickerIcon.load() } else null
     if (logo != null) Window(
         onCloseRequest = {
             windowVisible = false
+            settingsVisible = false
             helpVisible = false
             supportVisible = false
             updateVisible = false
@@ -1517,6 +1572,7 @@ private fun TaskbarPickerApplication(
     ) {
         DisposableEffect(window) {
             val frame = window
+            frame.minimumSize = Dimension(minOf(560, workArea.width), minOf(500, workArea.height))
             fun activate() {
                 if (frame.isShowing) {
                     frame.toFront()
@@ -1535,52 +1591,56 @@ private fun TaskbarPickerApplication(
                 Picker(
                     snapshot = snapshot,
                     error = displayMessage,
-                    changing = changing,
-                    autostartState = autostartState,
-                    autostartChanging = autostartChanging,
-                    onRetryAutostart = if (installation != null) {
-                        { autostartRequests.trySend(AutostartRequest.Read) }
-                    } else null,
-                    onAutostartChange = { enabled ->
-                        autostartChanging = true
-                        if (autostartRequests.trySend(AutostartRequest.Set(enabled)).isFailure) autostartChanging = false
-                    },
-                    autoNewChanging = autoNewChanging,
-                    onAutoNewChange = { enabled ->
-                        autoNewChanging = true
-                        if (autoNewChanges.trySend(enabled).isFailure) autoNewChanging = false
-                    },
-                    onOpenHelp = { helpVisible = true },
-                    onOpenSupport = { supportVisible = true },
-                    updateLabel = if (updateVersion != null) "有更新" else "版本",
-                    onOpenUpdate = if (createUpdater != null) { { updateVisible = true } } else null,
-                    cleanupSelectionMode = cleanupSelectionMode,
-                    selectedCleanupKeys = selectedCleanupKeys,
-                    cleanupChanging = cleanupChanging,
-                    cleanupFeedback = cleanupFeedback,
-                    onCleanupModeChange = { enabled ->
-                        cleanupSelectionMode = enabled
-                        selectedCleanupKeys = emptySet()
-                        cleanupError = null
-                        cleanupFeedback = null
-                    },
-                    onCleanupSelectionChange = { key, selected ->
-                        val normalizedKey = normalized(key)
-                        selectedCleanupKeys = if (selected) selectedCleanupKeys + normalizedKey
-                        else selectedCleanupKeys - normalizedKey
-                        cleanupFeedback = null
+                    listReadFailed = scanReadError != null,
+                    busy = changing || cleanupChanging,
+                    feedback = cleanupFeedback ?: batchFeedback,
+                    onOpenSettings = { settingsVisible = true },
+                    onOpenSupport = {
+                        if (supportVisible) bringWindowToFront("支持开发")
+                        else supportVisible = true
                     },
                     onRemoveApps = { identities ->
-                        cleanupChanging = true
-                        if (cleanupRequests.trySend(identities).isFailure) cleanupChanging = false
+                        if (!changing && !cleanupChanging && identities.isNotEmpty()) {
+                            cleanupChanging = true
+                            cleanupError = null
+                            cleanupFeedback = null
+                            writeError = null
+                            batchFeedback = null
+                            if (cleanupRequests.trySend(identities).isFailure) {
+                                cleanupChanging = false
+                                cleanupError = "清理请求未提交，请重试"
+                            }
+                        }
                     },
-                ) {
-                    changing = true
-                    changes.trySend(it)
-                }
+                    onWrite = ::submitRules,
+                )
             }
         }
     }
+
+    if (logo != null && settingsVisible) TaskbarSettingsWindow(
+        logo = logo,
+        autostartState = autostartState,
+        autostartChanging = autostartChanging,
+        onRetryAutostart = if (installation != null) {
+            { autostartRequests.trySend(AutostartRequest.Read) }
+        } else null,
+        onAutostartChange = { enabled ->
+            autostartChanging = true
+            if (autostartRequests.trySend(AutostartRequest.Set(enabled)).isFailure) autostartChanging = false
+        },
+        autoNewEnabled = snapshot.autoNewEnabled,
+        autoNewChanging = autoNewChanging,
+        autoNewError = userFacingStatus(autoNewError),
+        onAutoNewChange = { enabled ->
+            autoNewChanging = true
+            if (autoNewChanges.trySend(enabled).isFailure) autoNewChanging = false
+        },
+        onOpenHelp = { helpVisible = true },
+        updateLabel = if (updateVersion != null) "有更新" else "版本与更新",
+        onOpenUpdate = if (createUpdater != null) { { updateVisible = true } } else null,
+        onClose = { settingsVisible = false },
+    )
 
     TaskbarHelpWindow(
         visible = helpVisible && windowVisible,
@@ -1614,438 +1674,618 @@ private fun TaskbarPickerApplication(
     )
 }
 
-@androidx.compose.runtime.Composable
-private fun AppSettingsRow(
-    title: String,
-    detail: String,
-    iconData: String,
-    iconRule: SavedSetting?,
-    stackRule: SavedSetting?,
-    effectiveStack: Boolean?,
-    iconKey: String,
-    processKey: String?,
-    canonicalStackKey: String,
-    stackKey: String,
-    iconCache: TaskbarIconCache,
-    changing: Boolean,
-    cleanupSelectionMode: Boolean,
-    cleanupSelected: Boolean,
-    cleanupEligible: Boolean,
-    onCleanupSelectionChange: (Boolean) -> Unit,
-    onChange: (Change) -> Unit,
-) {
-    val colors = LixingTheme.colors
-    val icon = remember(iconCache, iconData) { iconCache.get(iconData) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
-            if (icon != null) Image(icon, contentDescription = null, Modifier.size(24.dp))
-        }
-        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-            BasicText(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = colors.text, fontSize = 14.sp))
-            BasicText(detail, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = colors.text, fontSize = 11.sp))
-        }
-        if (cleanupSelectionMode) {
-            Column(Modifier.width(112.dp), verticalArrangement = Arrangement.Center) {
-                if (cleanupEligible) {
-                    LixingCheckbox(
-                        "选择",
-                        cleanupSelected,
-                        onCleanupSelectionChange,
-                        enabled = !changing,
-                    )
-                    BasicText(
-                        "删除历史和设置",
-                        modifier = Modifier.padding(start = 27.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 9.sp),
-                    )
-                } else {
-                    BasicText("暂无已存记录", style = TextStyle(color = colors.text.copy(alpha = 0.68f), fontSize = 10.sp))
-                }
-            }
-        } else {
-            Column(Modifier.width(112.dp), verticalArrangement = Arrangement.Center) {
-                LixingCheckbox(
-                    "仅图标",
-                    iconRule?.enabled == true,
-                    { enabled -> onChange(Change(
-                        key = iconKey,
-                        processKey = processKey,
-                        canonicalStackKey = canonicalStackKey,
-                        hide = enabled,
-                    )) },
-                    enabled = !changing,
-                )
-                BasicText(
-                    when {
-                        iconRule?.enabled == true -> "已设置：仅图标"
-                        iconRule != null -> "已设置：显示名称"
-                        else -> "默认：显示名称"
-                    },
-                    modifier = Modifier.padding(start = 27.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 9.sp),
-                )
-            }
-            Column(Modifier.width(112.dp), verticalArrangement = Arrangement.Center) {
-                val stackState = when (stackRule?.enabled ?: effectiveStack) {
-                    true -> ToggleableState.On
-                    false -> ToggleableState.Off
-                    null -> ToggleableState.Indeterminate
-                }
-                LixingTriStateCheckbox(
-                    "叠放",
-                    stackState,
-                    { onChange(Change(key = stackKey, stack = stackState != ToggleableState.On)) },
-                    enabled = !changing,
-                )
-                BasicText(
-                    when {
-                        stackRule != null && stackRule.enabled -> "已设置：叠放"
-                        stackRule != null -> "已设置：分开"
-                        effectiveStack == true -> "跟随系统：当前叠放"
-                        effectiveStack == false -> "跟随系统：当前分开"
-                        else -> "跟随系统：当前未知"
-                    },
-                    modifier = Modifier.padding(start = 27.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 9.sp),
-                )
-            }
-        }
+private enum class AppSection(val label: String) {
+    ACTIVE("当前任务栏"),
+    HISTORY("历史应用"),
+    SAVED("其他已保存"),
+}
+
+private enum class CheckedFilter(val label: String) {
+    ALL("全部状态"),
+    ANY("已勾选任一项"),
+    NONE("无已勾选项"),
+    ICON("已勾选仅图标"),
+    STACK("已勾选叠放");
+
+    fun matches(row: PickerRow): Boolean = when (this) {
+        ALL -> true
+        ANY -> row.iconChecked || row.stackChecked == true
+        NONE -> !row.iconChecked && row.stackChecked != true
+        ICON -> row.iconChecked
+        STACK -> row.stackChecked == true
     }
 }
 
+private enum class BatchAction(val label: String) {
+    ICON("设为仅图标"),
+    NAME("显示名称"),
+    STACK("叠放窗口"),
+    SEPARATE("分开窗口"),
+    CLEANUP("清理应用记录");
+
+    fun change(row: PickerRow): Change = when (this) {
+        ICON -> row.iconChange(true)
+        NAME -> row.iconChange(false)
+        STACK -> row.stackChange(true)
+        SEPARATE -> row.stackChange(false)
+        CLEANUP -> error("清理使用独立命令")
+    }
+}
+
+private const val ALL_APP_SECTIONS = "all"
+
+private data class PickerRow(
+    val section: AppSection,
+    val key: String,
+    val uiKey: String,
+    val title: String,
+    val detail: String,
+    val iconData: String,
+    val processKey: String?,
+    val iconRule: SavedSetting?,
+    val stackRule: SavedSetting?,
+    val effectiveStack: Boolean? = null,
+) {
+    val selectionKey = normalized(key)
+    val listKey = "${section.name}:${normalized(uiKey)}"
+    val selectable = key.isNotBlank() && !key.startsWith("id:*PID", ignoreCase = true)
+    val iconChecked: Boolean get() = iconRule?.enabled == true
+    val stackChecked: Boolean? get() = stackRule?.enabled ?: effectiveStack
+    val iconWriteKey: String get() = iconRule?.key ?: key
+    private val searchNames = listOfNotNull(title, key, processKey, iconRule?.key, stackRule?.key)
+
+    fun matchesSearch(words: List<String>): Boolean =
+        words.all { word -> searchNames.any { it.contains(word, ignoreCase = true) } }
+
+    fun iconChange(checked: Boolean) = Change(
+        key = iconWriteKey,
+        processKey = processKey,
+        canonicalStackKey = key,
+        hide = checked,
+    )
+
+    fun stackChange(checked: Boolean) = Change(key = key, stack = checked)
+}
+
+private fun usesProcessRule(key: String, processKey: String, vararg rules: SavedSetting?): Boolean =
+    !processKey.equals(key, ignoreCase = true) && rules.any { it?.key.equals(processKey, ignoreCase = true) }
+
+private fun pickerRows(apps: List<AppRow>, history: List<HistoryAppRow>, saved: List<ClosedAppRow>) = buildList {
+    apps.forEach { app ->
+        val detail = listOfNotNull(
+            app.windowCount?.let { "$it 个窗口" },
+            ruleLabel(app.key).takeIf(String::isNotBlank),
+            "同程序".takeIf { usesProcessRule(app.key, app.processIdentity, app.iconRule, app.stackRule) },
+        ).joinToString(" · ").ifBlank { "无法识别应用" }
+        add(PickerRow(
+            AppSection.ACTIVE, app.key, app.uiKey, app.title, detail, app.icon,
+            app.processIdentity, app.iconRule, app.stackRule, app.effectiveStack,
+        ))
+    }
+    history.forEach { app ->
+        val detail = listOfNotNull(
+            "上次打开 ${formatHistoryTime(app.lastSeenUnixMilliseconds)}",
+            ruleLabel(app.key).takeIf(String::isNotBlank),
+            "同程序".takeIf { usesProcessRule(app.key, app.processIdentity, app.iconRule, app.stackRule) },
+        ).joinToString(" · ")
+        add(PickerRow(
+            AppSection.HISTORY, app.key, app.key, app.title, detail, app.icon,
+            app.processIdentity, app.iconRule, app.stackRule,
+        ))
+    }
+    saved.forEach { app ->
+        add(PickerRow(
+            AppSection.SAVED, app.key, app.key, ruleLabel(app.key).ifBlank { app.key },
+            "已保存规则", "", null, app.iconRule, app.stackRule,
+        ))
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun AppSettingsRow(
+    row: PickerRow,
+    iconCache: TaskbarIconCache,
+    selecting: Boolean,
+    selected: Boolean,
+    busy: Boolean,
+    onSelect: (Boolean) -> Unit,
+    onChange: (Change) -> Unit,
+) {
+    val colors = LixingTheme.colors
+    val icon = remember(iconCache, row.iconData) { iconCache.get(row.iconData) }
+    val stackState = when (row.stackChecked) {
+        true -> ToggleableState.On
+        false -> ToggleableState.Off
+        null -> ToggleableState.Indeterminate
+    }
+    val iconDetail = when {
+        row.iconChecked -> "已设置"
+        row.iconRule != null -> "显示名称"
+        else -> "默认显示名称"
+    }
+    val stackDetail = when {
+        row.stackRule?.enabled == true -> "已设置叠放"
+        row.stackRule != null -> "已设置分开"
+        row.effectiveStack == true -> "系统 · 当前叠放"
+        row.effectiveStack == false -> "系统 · 当前分开"
+        else -> "系统 · 当前未知"
+    }
+    Row(
+        Modifier.fillMaxWidth()
+            .background(if (selected) colors.surfaceRaised else colors.surface)
+            .heightIn(min = 58.dp).padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (selecting) {
+            Box(Modifier.width(82.dp)) {
+                LixingCheckbox(
+                    "选择", selected, onSelect,
+                    Modifier.semantics { contentDescription = "选择 ${row.title}" },
+                    enabled = !busy && row.selectable,
+                )
+            }
+        }
+        Box(
+            Modifier.size(32.dp).background(colors.surfaceRaised, RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (icon != null) {
+                Image(icon, contentDescription = null, Modifier.size(24.dp))
+            } else {
+                BasicText(row.title.take(1), style = TextStyle(color = colors.textMuted, fontSize = 15.sp))
+            }
+        }
+        Column(Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            BasicText(row.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(color = colors.text, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+            BasicText(row.detail, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = TextStyle(color = colors.textMuted, fontSize = 11.sp))
+        }
+        if (row.key.isNotBlank()) {
+            if (selecting) {
+                val iconStatus = if (row.iconChecked) "仅图标" else "显示名称"
+                BasicText(
+                    "$iconStatus · $stackDetail",
+                    Modifier.width(148.dp),
+                    style = TextStyle(color = colors.textMuted, fontSize = 11.sp),
+                )
+            } else {
+                Column(Modifier.width(106.dp)) {
+                    LixingCheckbox(
+                        "仅图标", row.iconChecked, { onChange(row.iconChange(it)) },
+                        Modifier.semantics { contentDescription = "${row.title} 的仅图标设置" },
+                        enabled = !busy,
+                    )
+                    BasicText(iconDetail, Modifier.padding(start = 26.dp),
+                        style = TextStyle(color = colors.textMuted, fontSize = 10.sp))
+                }
+                Column(Modifier.width(126.dp)) {
+                    LixingTriStateCheckbox(
+                        "叠放", stackState,
+                        { onChange(row.stackChange(stackState != ToggleableState.On)) },
+                        Modifier.semantics {
+                            contentDescription = "${row.title} 的叠放设置"
+                            stateDescription = stackDetail
+                        },
+                        enabled = !busy,
+                    )
+                    BasicText(stackDetail, Modifier.padding(start = 26.dp),
+                        style = TextStyle(color = colors.textMuted, fontSize = 10.sp))
+                }
+            }
+        }
+    }
+    Box(Modifier.fillMaxWidth().size(1.dp).background(colors.border.copy(alpha = 0.24f)))
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @androidx.compose.runtime.Composable
 private fun Picker(
     snapshot: Snapshot,
     error: String?,
-    changing: Boolean,
-    autostartState: AutostartState,
-    autostartChanging: Boolean,
-    onRetryAutostart: (() -> Unit)?,
-    onAutostartChange: (Boolean) -> Unit,
-    autoNewChanging: Boolean,
-    onAutoNewChange: (Boolean) -> Unit,
-    onOpenHelp: () -> Unit,
+    listReadFailed: Boolean,
+    busy: Boolean,
+    feedback: String?,
+    onOpenSettings: () -> Unit,
     onOpenSupport: () -> Unit,
-    updateLabel: String,
-    onOpenUpdate: (() -> Unit)?,
-    cleanupSelectionMode: Boolean,
-    selectedCleanupKeys: Set<String>,
-    cleanupChanging: Boolean,
-    cleanupFeedback: String?,
-    onCleanupModeChange: (Boolean) -> Unit,
-    onCleanupSelectionChange: (String, Boolean) -> Unit,
     onRemoveApps: (List<String>) -> Unit,
-    onChange: (Change) -> Unit,
+    onWrite: (RuleWriteRequest) -> Unit,
 ) {
     val colors = LixingTheme.colors
     val listState = rememberLazyListState()
     val iconCache = remember { TaskbarIconCache() }
-    val apps = remember(snapshot.items, snapshot.rules, snapshot.stacks) { appRows(snapshot) }
-    val history = remember(snapshot.history, snapshot.rules, snapshot.stacks, apps) { historyAppRows(snapshot, apps) }
-    val activeAliases = remember(apps) { apps.flatMap { it.aliases }.map(::normalized).toSet() }
-    val historyAliases = remember(history) { history.flatMap { it.aliases }.map(::normalized).toSet() }
-    val closed = remember(snapshot.rules, snapshot.stacks, activeAliases, historyAliases) {
-        closedAppRows(snapshot, activeAliases + historyAliases)
-    }
-    val cleanupTargets = remember(apps, history, closed, snapshot.history) {
-        val identities = mutableListOf<String>()
-        history.forEach { identities += it.key }
-        closed.forEach { identities += it.key }
-        apps.forEach { app ->
-            val identity = app.identity.ifBlank { app.processIdentity }
-            val hasHistory = snapshot.history.any { item ->
-                if (item.identity.startsWith("id:", ignoreCase = true)) {
-                    normalized(item.identity) == normalized(app.identity)
-                } else {
-                    normalized(item.processIdentity.ifBlank { item.identity }) == normalized(app.processIdentity)
+    var search by remember { mutableStateOf("") }
+    var checkedFilter by remember { mutableStateOf(CheckedFilter.ALL) }
+    var sectionFilter by remember { mutableStateOf(ALL_APP_SECTIONS) }
+    var selecting by remember { mutableStateOf(false) }
+    var selection by remember { mutableStateOf(emptySet<String>()) }
+    var batchAction by remember { mutableStateOf<BatchAction?>(null) }
+    var cleanupConfirmation by remember { mutableStateOf<List<String>?>(null) }
+    val applyFocus = remember { FocusRequester() }
+    val cancelFocus = remember { FocusRequester() }
+    var restoreApplyFocus by remember { mutableStateOf(false) }
+    var headerHeight by remember { mutableStateOf(0) }
+    val listBringIntoView = remember {
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                // The sticky header covers the leading edge of the scrolling viewport.
+                val inset = headerHeight.toFloat().coerceAtMost((containerSize - size).coerceAtLeast(0f))
+                return when {
+                    offset < inset -> offset - inset
+                    offset + size > containerSize -> offset + size - containerSize
+                    else -> 0f
                 }
             }
-            if (app.iconRule != null || app.stackRule != null || hasHistory) identities += identity
         }
-        identities.filter(String::isNotBlank).distinctBy(::normalized)
     }
-    val cleanupTargetKeys = remember(cleanupTargets) { cleanupTargets.map(::normalized).toSet() }
-    LaunchedEffect(cleanupTargetKeys, selectedCleanupKeys) {
-        (selectedCleanupKeys - cleanupTargetKeys).forEach { onCleanupSelectionChange(it, false) }
+    val apps = remember(snapshot.items, snapshot.rules, snapshot.stacks) { appRows(snapshot) }
+    val history = remember(snapshot.history, snapshot.rules, snapshot.stacks, apps) { historyAppRows(snapshot, apps) }
+    val saved = remember(snapshot.rules, snapshot.stacks, apps, history) {
+        val known = (apps.flatMap { it.aliases } + history.flatMap { it.aliases }).map(::normalized).toSet()
+        closedAppRows(snapshot, known)
     }
-    val selectedTargets = cleanupTargets.filter { normalized(it) in selectedCleanupKeys }
-    val status = error ?: cleanupFeedback ?: when (snapshot.status) {
-        "loading" -> "正在连接任务栏…"
-        "inactive" -> "任务栏功能未运行；请启动 Windhawk 模块。"
-        "pending" -> "已保存，等待任务栏更新…"
-        else -> "${snapshot.rules.values.count { it.enabled }} 项仅图标设置 · ${snapshot.stacks.values.count { it.enabled }} 项叠放"
+    val rows = remember(apps, history, saved) { pickerRows(apps, history, saved) }
+    val visibleRows = remember(rows, search, checkedFilter, sectionFilter) {
+        val words = search.trim().split(Regex("\\s+")).filter(String::isNotBlank)
+        rows.filter { row ->
+            (sectionFilter == ALL_APP_SECTIONS || row.section.name == sectionFilter) &&
+                checkedFilter.matches(row) && row.matchesSearch(words)
+        }
     }
-    val scrollbarStyle = remember(colors.text) {
+    val groups = remember(visibleRows) { visibleRows.groupBy { it.section } }
+    val selectableKeys = remember(visibleRows) {
+        visibleRows.filter(PickerRow::selectable).map(PickerRow::selectionKey).toSet()
+    }
+    val selectedRows = remember(visibleRows, selection) {
+        visibleRows.filter { it.selectable && it.selectionKey in selection }.distinctBy(PickerRow::selectionKey)
+    }
+    val cleanupKeys = remember(rows, snapshot.history) {
+        val historyIdentities = snapshot.history.filter { it.identity.startsWith("id:", ignoreCase = true) }
+            .map { normalized(it.identity) }.toSet()
+        val historyProcesses = snapshot.history.filterNot { it.identity.startsWith("id:", ignoreCase = true) }
+            .map { normalized(it.processIdentity.ifBlank { it.identity }) }.filter(String::isNotBlank).toSet()
+        rows.filter { row ->
+            row.selectable && (row.section != AppSection.ACTIVE || row.iconRule != null || row.stackRule != null ||
+                row.selectionKey in historyIdentities || row.processKey?.let { normalized(it) in historyProcesses } == true)
+        }.map(PickerRow::selectionKey).toSet()
+    }
+    val cleanupTargets = selectedRows.filter { it.selectionKey in cleanupKeys }.map(PickerRow::key)
+    val resetting = search.isNotEmpty() || checkedFilter != CheckedFilter.ALL || sectionFilter != ALL_APP_SECTIONS
+    val allSelected = selectableKeys.isNotEmpty() && selection.containsAll(selectableKeys)
+    val scrollbarStyle = remember(colors.textMuted) {
         ScrollbarStyle(
             minimalHeight = 32.dp,
-            thickness = 12.dp,
-            shape = RoundedCornerShape(6.dp),
+            thickness = 8.dp,
+            shape = RoundedCornerShape(4.dp),
             hoverDurationMillis = 120,
-            unhoverColor = colors.text.copy(alpha = 0.68f),
-            hoverColor = colors.text,
+            unhoverColor = colors.textMuted.copy(alpha = 0.62f),
+            hoverColor = colors.textMuted,
         )
+    }
+    val serviceStatus = when {
+        snapshot.status == "loading" -> "正在连接任务栏…"
+        snapshot.status == "inactive" -> "任务栏功能未运行，请启动 Windhawk 模块"
+        snapshot.status == "pending" -> "等待任务栏更新…"
+        snapshot.status == "unknown" -> "任务栏状态未知"
+        snapshot.historyError != null -> "历史记录暂时无法读取"
+        else -> null
+    }
+    val status = when {
+        busy -> "正在处理所选设置…"
+        error != null -> error
+        else -> listOfNotNull(feedback, serviceStatus).joinToString(" · ").ifBlank { "任务栏已连接" }
+    }
+
+    fun clearSelection() {
+        selection = emptySet()
+        cleanupConfirmation = null
+    }
+
+    fun resetFilters() {
+        search = ""
+        checkedFilter = CheckedFilter.ALL
+        sectionFilter = ALL_APP_SECTIONS
+        clearSelection()
+    }
+
+    LaunchedEffect(search, checkedFilter, sectionFilter) { listState.scrollToItem(0) }
+    LaunchedEffect(selectableKeys) { selection = selection.intersect(selectableKeys) }
+    LaunchedEffect(cleanupConfirmation, restoreApplyFocus) {
+        if (cleanupConfirmation != null) cancelFocus.requestFocus()
+        else if (restoreApplyFocus) {
+            applyFocus.requestFocus()
+            restoreApplyFocus = false
+        }
     }
 
     Column(
-        Modifier.fillMaxSize().background(colors.canvas).padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+        Modifier.fillMaxSize().background(colors.canvas).padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(
-                "按应用设置任务栏",
-                Modifier.weight(1f),
-                style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
-            )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BasicText("应用列表", Modifier.weight(1f).semantics { heading() },
+                style = TextStyle(color = colors.text, fontSize = 25.sp, fontWeight = FontWeight.SemiBold))
             LixingButton(
-                if (cleanupSelectionMode) "取消清理" else "清理",
-                { onCleanupModeChange(!cleanupSelectionMode) },
-                enabled = cleanupSelectionMode || cleanupTargets.isNotEmpty(),
+                if (selecting) "退出选择" else "批量选择",
+                { selecting = !selecting; clearSelection() },
+                enabled = !busy && (selecting || selectableKeys.isNotEmpty()),
+                variant = if (selecting) ButtonVariant.Selected else ButtonVariant.Default,
+            )
+            LixingButton("支持开发", onOpenSupport)
+            LixingButton("设置", onOpenSettings, variant = ButtonVariant.Quiet)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            LixingTextField("搜索应用", search, { search = it; clearSelection() }, Modifier.weight(1f),
+                enabled = !busy)
+            LixingSelect(
+                "勾选状态", CheckedFilter.entries.map { ChoiceOption(it.name, it.label) }, checkedFilter.name,
+                {
+                    val requested = CheckedFilter.valueOf(it)
+                    if (checkedFilter != requested) {
+                        checkedFilter = requested
+                        clearSelection()
+                    }
+                },
+                Modifier.width(190.dp), enabled = !busy,
+            )
+            LixingSelect(
+                "应用分类",
+                listOf(ChoiceOption(ALL_APP_SECTIONS, "全部分类")) + AppSection.entries.map { ChoiceOption(it.name, it.label) },
+                sectionFilter,
+                {
+                    if (sectionFilter != it) {
+                        sectionFilter = it
+                        clearSelection()
+                    }
+                },
+                Modifier.width(176.dp), enabled = !busy,
+            )
+        }
+        Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val selectionSummary = if (selecting) " · 已选 ${selectedRows.size} 项" else ""
+            BasicText(
+                "显示 ${visibleRows.size} / ${rows.size} 个应用$selectionSummary", Modifier.weight(1f),
+                style = TextStyle(color = colors.textMuted, fontSize = 12.sp),
+            )
+            if (selecting) LixingButton(
+                if (allSelected) "取消全选" else "全选当前结果",
+                {
+                    selection = if (allSelected) emptySet() else selectableKeys
+                    cleanupConfirmation = null
+                },
+                enabled = selectableKeys.isNotEmpty() && !busy,
                 variant = ButtonVariant.Quiet,
             )
-            LixingButton("说明", onOpenHelp, variant = ButtonVariant.Quiet)
-            LixingButton("支持开发", onOpenSupport, variant = ButtonVariant.Quiet)
-            if (onOpenUpdate != null) LixingButton(updateLabel, onOpenUpdate, variant = ButtonVariant.Quiet)
+            if (resetting) LixingButton("重置筛选", ::resetFilters, enabled = !busy, variant = ButtonVariant.Quiet)
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BasicText(status, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = TextStyle(color = colors.text, fontSize = 12.sp))
-            BasicText(
-                "应用记录 ${snapshot.appCount?.toString() ?: "—"}/500",
-                modifier = Modifier.padding(start = 10.dp),
-                maxLines = 1,
-                style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 10.sp),
-            )
-        }
-        if (cleanupSelectionMode) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                BasicText(
-                    "已选 ${selectedTargets.size} 项 · 同时删除历史和设置",
-                    Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = colors.text, fontSize = 11.sp),
-                )
-                LixingButton(
-                    "删除所选",
-                    { onRemoveApps(selectedTargets) },
-                    enabled = selectedTargets.isNotEmpty() && !cleanupChanging,
-                    variant = ButtonVariant.Danger,
-                )
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                val autostartDetail = when (autostartState.value) {
-                    AutostartState.Value.LOADING -> "正在读取设置…"
-                    AutostartState.Value.UNAVAILABLE -> "无法确认当前安装"
-                    AutostartState.Value.ENABLED -> "已设置登录时启动"
-                    AutostartState.Value.DISABLED -> "未设置登录启动"
-                    AutostartState.Value.FOREIGN -> "已有其他登录启动设置"
-                    AutostartState.Value.ERROR -> "读取失败，请重试"
+        val listShape = RoundedCornerShape(8.dp)
+        Box(
+            Modifier.fillMaxWidth().weight(1f).clip(listShape).background(colors.surface)
+                .border(1.dp, colors.border, listShape).padding(1.dp),
+        ) {
+            if (visibleRows.isEmpty()) {
+                val message = when {
+                    snapshot.status == "loading" -> "正在读取应用…"
+                    listReadFailed -> "应用列表暂时无法读取"
+                    snapshot.historyError != null && sectionFilter != AppSection.ACTIVE.name -> "历史记录暂时无法读取"
+                    !snapshot.historyLoaded && sectionFilter == AppSection.HISTORY.name -> "正在读取历史应用…"
+                    snapshot.status == "inactive" && rows.isEmpty() -> "等待任务栏模块连接"
+                    resetting -> "没有匹配的应用"
+                    else -> "暂无可显示的应用"
                 }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("登录 Windows 后启动", Modifier.weight(1f),
-                        style = TextStyle(color = colors.text, fontSize = 12.sp, fontWeight = FontWeight.Medium))
-                    val autostartToggleState = when (autostartState.value) {
-                        AutostartState.Value.ENABLED -> ToggleableState.On
-                        AutostartState.Value.DISABLED -> ToggleableState.Off
-                        else -> ToggleableState.Indeterminate
-                    }
-                    LixingTriStateCheckbox(
-                        "开机启动", autostartToggleState,
-                        { onAutostartChange(autostartState.value != AutostartState.Value.ENABLED) },
-                        enabled = autostartState.toggleEnabled && !autostartChanging,
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText(autostartDetail, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 10.sp))
-                    if (onRetryAutostart != null && (autostartState.value == AutostartState.Value.ERROR ||
-                            autostartState.value == AutostartState.Value.UNAVAILABLE)) {
-                        LixingButton("重试", onRetryAutostart, variant = ButtonVariant.Quiet)
-                    }
-                }
-            }
-            Column(Modifier.weight(1f)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    BasicText("新应用自动设置", Modifier.weight(1f),
-                        style = TextStyle(color = colors.text, fontSize = 12.sp, fontWeight = FontWeight.Medium))
-                    val autoNewState = when (snapshot.autoNewEnabled) {
-                        true -> ToggleableState.On
-                        false -> ToggleableState.Off
-                        null -> ToggleableState.Indeterminate
-                    }
-                    LixingTriStateCheckbox(
-                        "自动设置", autoNewState,
-                        { onAutoNewChange(snapshot.autoNewEnabled != true) },
-                        enabled = snapshot.autoNewEnabled != null && !autoNewChanging,
-                    )
-                }
-                BasicText("首次出现时隐藏名称并叠放", maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(color = colors.text.copy(alpha = 0.76f), fontSize = 10.sp))
-            }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (apps.isEmpty()) {
-                    item(key = "empty:active") {
-                        BasicText("任务栏上暂无可读取的应用按钮", style = TextStyle(color = colors.text, fontSize = 14.sp))
-                    }
-                } else {
-                    item(key = "section:active") {
-                        BasicText("当前在任务栏显示", Modifier.padding(top = 4.dp),
-                            style = TextStyle(color = colors.text, fontWeight = FontWeight.SemiBold))
-                    }
-                    itemsIndexed(
-                        items = apps,
-                        key = { _, app -> "active:${normalized(app.uiKey)}" },
-                        contentType = { _, _ -> "app" },
-                    ) { _, app ->
-                        if (app.key.isBlank()) {
-                            BasicText("无法识别应用", style = TextStyle(color = colors.text, fontSize = 12.sp))
-                        } else {
-                            val detailParts = buildList {
-                                app.windowCount?.let { add("$it 个窗口") }
-                                ruleLabel(app.key).ifBlank { "应用身份未知" }.let(::add)
-                                val processScoped = app.identity.isNotBlank() &&
-                                    listOfNotNull(app.iconRule?.key, app.stackRule?.key)
-                                        .any { normalized(it) == normalized(app.processIdentity) && normalized(it) != normalized(app.identity) }
-                                if (processScoped) add("同程序")
+                BasicText(message, Modifier.align(Alignment.Center).padding(12.dp),
+                    style = TextStyle(color = colors.textMuted, fontSize = 14.sp))
+            } else {
+                CompositionLocalProvider(LocalBringIntoViewSpec provides listBringIntoView) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().padding(end = 12.dp),
+                    ) {
+                        groups.forEach { (section, group) ->
+                            stickyHeader(key = "section:${section.name}", contentType = "section") {
+                                Row(
+                                    Modifier.fillMaxWidth().background(colors.surfaceRaised)
+                                        .onSizeChanged { headerHeight = it.height }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    BasicText(section.label, Modifier.weight(1f).semantics { heading() },
+                                        style = TextStyle(color = colors.text, fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp))
+                                    BasicText("${group.size} 项", style = TextStyle(color = colors.textMuted, fontSize = 11.sp))
+                                }
                             }
-                            AppSettingsRow(
-                                title = app.title,
-                                detail = detailParts.joinToString(" · "),
-                                iconData = app.icon,
-                                iconRule = app.iconRule,
-                                stackRule = app.stackRule,
-                                effectiveStack = app.effectiveStack,
-                                iconKey = app.iconRule?.key ?: app.key,
-                                processKey = app.processIdentity,
-                                canonicalStackKey = app.key,
-                                stackKey = app.key,
-                                iconCache = iconCache,
-                                changing = changing || cleanupChanging,
-                                cleanupSelectionMode = cleanupSelectionMode,
-                                cleanupSelected = normalized(app.key) in selectedCleanupKeys,
-                                cleanupEligible = normalized(app.key) in cleanupTargetKeys,
-                                onCleanupSelectionChange = { selected -> onCleanupSelectionChange(app.key, selected) },
-                                onChange = onChange,
-                            )
+                            items(group, key = PickerRow::listKey, contentType = { "app" }) { row ->
+                                AppSettingsRow(
+                                    row, iconCache, selecting, row.selectionKey in selection, busy,
+                                    onSelect = { checked ->
+                                        selection = if (checked) selection + row.selectionKey else selection - row.selectionKey
+                                        cleanupConfirmation = null
+                                    },
+                                    onChange = { onWrite(RuleWriteRequest(listOf(it), batch = false)) },
+                                )
+                            }
                         }
                     }
                 }
-
-                item(key = "section:history") {
-                    BasicText("最近显示过", Modifier.padding(top = 14.dp),
-                        style = TextStyle(color = colors.text, fontWeight = FontWeight.SemiBold))
-                }
-                if (snapshot.historyError != null) {
-                    item(key = "history:error") {
-                        BasicText("历史记录暂不可用，正在重试。", style = TextStyle(color = colors.text, fontSize = 12.sp))
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(listState),
+                    modifier = Modifier.align(Alignment.CenterEnd).width(12.dp).fillMaxHeight()
+                        .semantics { contentDescription = "应用列表滚动条" },
+                    style = scrollbarStyle,
+                )
+            }
+        }
+        if (selecting) {
+            Column(
+                Modifier.fillMaxWidth().background(colors.surfaceRaised, RoundedCornerShape(8.dp)).padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                val confirmation = cleanupConfirmation
+                if (confirmation != null) {
+                    val sameTargets = confirmation == cleanupTargets
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BasicText(
+                            if (sameTargets) "清理 ${confirmation.size} 项应用的历史和设置？"
+                            else "可清理的应用已变化，请重新确认。",
+                            Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                            style = TextStyle(color = colors.text, fontSize = 13.sp),
+                        )
+                        LixingButton("取消", {
+                            cleanupConfirmation = null
+                            restoreApplyFocus = true
+                        }, Modifier.focusRequester(cancelFocus), variant = ButtonVariant.Quiet)
+                        LixingButton("确认清理", {
+                            if (sameTargets) {
+                                cleanupConfirmation = null
+                                onRemoveApps(confirmation)
+                            }
+                        }, enabled = sameTargets && !busy, variant = ButtonVariant.Danger)
                     }
-                }
-                if (!snapshot.historyLoaded && snapshot.historyError == null) {
-                    item(key = "history:loading") {
-                        BasicText("正在读取已显示应用…", style = TextStyle(color = colors.text, fontSize = 12.sp))
+                    if (sameTargets) {
+                        BasicText("清理可能同时移除关联的程序级规则",
+                            style = TextStyle(color = colors.textMuted, fontSize = 11.sp))
                     }
-                } else if (history.isEmpty() && snapshot.historyError == null) {
-                    item(key = "history:empty") {
-                        BasicText("应用显示在任务栏后，会按最近出现时间保存在这里。",
-                            style = TextStyle(color = colors.text, fontSize = 12.sp))
+                } else {
+                    val action = batchAction
+                    val ruleChanges = remember(action, selectedRows) {
+                        if (action == null || action == BatchAction.CLEANUP) emptyList()
+                        else selectedRows.map(action::change).distinctBy { normalized(it.key) }
                     }
-                }
-                itemsIndexed(
-                    items = history,
-                    key = { _, app -> "history:${normalized(app.key)}" },
-                    contentType = { _, _ -> "app" },
-                ) { _, app ->
-                    val detailParts = buildList {
-                        add("最近显示 ${formatHistoryTime(app.lastSeenUnixMilliseconds)}")
-                        val processScoped = app.identity.isNotBlank() &&
-                            listOfNotNull(app.iconRule?.key, app.stackRule?.key)
-                                .any { normalized(it) == normalized(app.processIdentity) && normalized(it) != normalized(app.identity) }
-                        if (processScoped) add("同程序")
+                    val count = if (action == BatchAction.CLEANUP) cleanupTargets.size else selectedRows.size
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        LixingSelect(
+                            "批量操作", BatchAction.entries.map { ChoiceOption(it.name, it.label) },
+                            action?.name, { batchAction = BatchAction.valueOf(it) }, Modifier.weight(1f),
+                            enabled = !busy,
+                        )
+                        LixingButton(
+                            if (action == BatchAction.CLEANUP) "清理 $count 项" else "应用到 $count 项",
+                            {
+                                if (action == BatchAction.CLEANUP) {
+                                    cleanupConfirmation = cleanupTargets
+                                } else {
+                                    onWrite(RuleWriteRequest(ruleChanges, batch = true))
+                                }
+                            },
+                            Modifier.focusRequester(applyFocus),
+                            enabled = action != null && count > 0 && !busy,
+                            variant = if (action == BatchAction.CLEANUP) ButtonVariant.Danger else ButtonVariant.Primary,
+                        )
                     }
-                    AppSettingsRow(
-                        title = app.title,
-                        detail = detailParts.joinToString(" · "),
-                        iconData = app.icon,
-                        iconRule = app.iconRule,
-                        stackRule = app.stackRule,
-                        effectiveStack = null,
-                        iconKey = app.iconRule?.key ?: app.key,
-                        processKey = app.processIdentity,
-                        canonicalStackKey = app.key,
-                        stackKey = app.key,
-                        iconCache = iconCache,
-                        changing = changing || cleanupChanging,
-                        cleanupSelectionMode = cleanupSelectionMode,
-                        cleanupSelected = normalized(app.key) in selectedCleanupKeys,
-                        cleanupEligible = normalized(app.key) in cleanupTargetKeys,
-                        onCleanupSelectionChange = { selected -> onCleanupSelectionChange(app.key, selected) },
-                        onChange = onChange,
-                    )
-                }
-
-                if (closed.isNotEmpty()) {
-                    item(key = "section:saved") {
-                        BasicText("其他已保存应用", Modifier.padding(top = 14.dp),
-                            style = TextStyle(color = colors.text, fontWeight = FontWeight.SemiBold))
+                    val scopeNotice = when {
+                        action == BatchAction.CLEANUP && count != selectedRows.size ->
+                            "所选应用中有 $count 项存在可清理的记录"
+                        ruleChanges.any {
+                            it.key.startsWith("path:", ignoreCase = true)
+                        } ->
+                            "包含同程序规则，也会影响共用该规则的其他应用"
+                        else -> null
                     }
-                }
-                itemsIndexed(
-                    items = closed,
-                    key = { _, app -> "saved:${normalized(app.key)}" },
-                    contentType = { _, _ -> "app" },
-                ) { _, app ->
-                    val settingSummary = when {
-                        app.iconRule?.enabled == true -> "仅图标已开启"
-                        app.iconRule != null -> "显示文字"
-                        app.stackRule?.enabled == true -> "仅保存了窗口叠放方式"
-                        else -> "未设置仅图标"
-                    }
-                    AppSettingsRow(
-                        title = ruleLabel(app.key).ifBlank { app.key },
-                        detail = settingSummary,
-                        iconData = "",
-                        iconRule = app.iconRule,
-                        stackRule = app.stackRule,
-                        effectiveStack = null,
-                        iconKey = app.iconRule?.key ?: app.key,
-                        processKey = null,
-                        canonicalStackKey = app.key,
-                        stackKey = app.stackRule?.key ?: app.key,
-                        iconCache = iconCache,
-                        changing = changing || cleanupChanging,
-                        cleanupSelectionMode = cleanupSelectionMode,
-                        cleanupSelected = normalized(app.key) in selectedCleanupKeys,
-                        cleanupEligible = normalized(app.key) in cleanupTargetKeys,
-                        onCleanupSelectionChange = { selected -> onCleanupSelectionChange(app.key, selected) },
-                        onChange = onChange,
-                    )
+                    if (scopeNotice != null) BasicText(scopeNotice,
+                        style = TextStyle(color = colors.textMuted, fontSize = 11.sp))
                 }
             }
-            VerticalScrollbar(
-                adapter = rememberScrollbarAdapter(listState),
-                modifier = Modifier.align(Alignment.CenterEnd).width(20.dp).fillMaxSize()
-                    .semantics { contentDescription = "应用列表滚动条" },
-                style = scrollbarStyle,
-            )
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BasicText(status, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+                style = TextStyle(color = colors.textMuted, fontSize = 12.sp))
+            BasicText("应用记录 ${snapshot.appCount?.toString() ?: "—"}/500",
+                style = TextStyle(color = colors.textMuted, fontSize = 11.sp))
         }
     }
 }
+
+@androidx.compose.runtime.Composable
+private fun TaskbarSettingsWindow(
+    logo: ImageBitmap,
+    autostartState: AutostartState,
+    autostartChanging: Boolean,
+    onRetryAutostart: (() -> Unit)?,
+    onAutostartChange: (Boolean) -> Unit,
+    autoNewEnabled: Boolean?,
+    autoNewChanging: Boolean,
+    autoNewError: String?,
+    onAutoNewChange: (Boolean) -> Unit,
+    onOpenHelp: () -> Unit,
+    updateLabel: String,
+    onOpenUpdate: (() -> Unit)?,
+    onClose: () -> Unit,
+) {
+    Window(
+        onCloseRequest = onClose,
+        title = "任务栏标签设置",
+        icon = androidx.compose.ui.graphics.painter.BitmapPainter(logo),
+        state = rememberWindowState(width = 500.dp, height = 440.dp),
+    ) {
+        LixingTheme {
+            val colors = LixingTheme.colors
+            val autostartDetail = when (autostartState.value) {
+                AutostartState.Value.LOADING -> "正在读取设置…"
+                AutostartState.Value.UNAVAILABLE -> "无法确认当前安装"
+                AutostartState.Value.ENABLED -> "已设置登录时启动"
+                AutostartState.Value.DISABLED -> "未设置登录启动"
+                AutostartState.Value.FOREIGN -> "已有其他登录启动设置"
+                AutostartState.Value.ERROR -> "读取失败，请重试"
+            }
+            val autostartCheck = when (autostartState.value) {
+                AutostartState.Value.ENABLED -> ToggleableState.On
+                AutostartState.Value.DISABLED -> ToggleableState.Off
+                else -> ToggleableState.Indeterminate
+            }
+            val autoNewCheck = when (autoNewEnabled) {
+                true -> ToggleableState.On
+                false -> ToggleableState.Off
+                null -> ToggleableState.Indeterminate
+            }
+            Column(
+                Modifier.fillMaxSize().background(colors.canvas).verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                BasicText("任务栏设置", Modifier.semantics { heading() },
+                    style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold))
+                Column(
+                    Modifier.fillMaxWidth().background(colors.surface, RoundedCornerShape(8.dp)).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            BasicText("新应用自动设置", style = TextStyle(color = colors.text, fontSize = 14.sp))
+                            BasicText(autoNewError ?: "首次出现时隐藏名称并叠放",
+                                style = TextStyle(color = colors.textMuted, fontSize = 12.sp))
+                        }
+                        LixingTriStateCheckbox("自动设置", autoNewCheck,
+                            { onAutoNewChange(autoNewEnabled != true) },
+                            enabled = autoNewEnabled != null && !autoNewChanging)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            BasicText("登录 Windows 后启动", style = TextStyle(color = colors.text, fontSize = 14.sp))
+                            BasicText(autostartDetail, style = TextStyle(color = colors.textMuted, fontSize = 12.sp))
+                        }
+                        if (onRetryAutostart != null && (autostartState.value == AutostartState.Value.ERROR ||
+                                autostartState.value == AutostartState.Value.UNAVAILABLE)) {
+                            LixingButton("重试", onRetryAutostart, variant = ButtonVariant.Quiet)
+                        }
+                        LixingTriStateCheckbox("登录时启动", autostartCheck,
+                            { onAutostartChange(autostartState.value != AutostartState.Value.ENABLED) },
+                            enabled = autostartState.toggleEnabled && !autostartChanging)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LixingButton("使用说明", onOpenHelp, variant = ButtonVariant.Quiet)
+                    if (onOpenUpdate != null) LixingButton(updateLabel, onOpenUpdate, variant = ButtonVariant.Quiet)
+                }
+            }
+        }
+    }
+}
+
 
 @androidx.compose.runtime.Composable
 private fun TaskbarHelpWindow(
@@ -2065,18 +2305,18 @@ private fun TaskbarHelpWindow(
             val colors = LixingTheme.colors
             LixingChoiceHost {
                 Column(
-                    Modifier.fillMaxSize().background(colors.canvas).padding(22.dp),
+                    Modifier.fillMaxSize().background(colors.canvas)
+                        .verticalScroll(rememberScrollState()).padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        BasicText(
-                            "简要说明",
-                            Modifier.weight(1f),
-                            style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
-                        )
-                        LixingButton("关闭", onClose, variant = ButtonVariant.Quiet)
-                    }
-                    BasicText("每行一个应用，可设置名称和窗口叠放。",
+                    BasicText(
+                        "使用说明",
+                        Modifier.semantics { heading() },
+                        style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+                    )
+                    BasicText("按名称、勾选状态和分类查找应用。批量选择中的全选只作用于当前结果。",
+                        style = TextStyle(color = colors.text, fontSize = 13.sp))
+                    BasicText("每行一个应用，可设置名称和窗口叠放。同程序规则可能影响同一程序的其他应用。",
                         style = TextStyle(color = colors.text, fontSize = 13.sp))
                     BasicText("新应用自动设置只作用于首次出现且没有规则的应用；关闭后保留已有设置。",
                         style = TextStyle(color = colors.text, fontSize = 13.sp))

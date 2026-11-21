@@ -1,6 +1,6 @@
 # Windows 安装包
 
-通过项目的 `Build.ps1` 构建配置器和桥接程序。为当前目标使用 Windhawk 1.7.3 编译 [任务栏模块](../mod/taskbar-label-picker.wh.cpp)，并用 Windows x64 .NET Framework 的 C# 编译器构建 `Launcher.cs` 与 `ProfileLocation.cs`。启动器使用 `/target:winexe /platform:x64 /reference:System.Windows.Forms.dll`，图标取 `../resources/windows-x64/taskbar-label-picker.ico`。
+通过项目的 `Build.ps1` 构建配置器和桥接程序。为当前目标使用 Windhawk 1.7.3 编译 [任务栏模块](../mod/taskbar-label-picker.wh.cpp)，并用 Windows x64 .NET Framework 的 C# 编译器构建 `Launcher.cs` 与 `ProfileLocation.cs`。启动器使用 `/target:winexe /platform:x64 /reference:System.Windows.Forms.dll /reference:System.Management.dll`，图标取 `../resources/windows-x64/taskbar-label-picker.ico`。
 
 公开源码检出后，先用 Python 3.12+ 与固定的 sidecar 配方准备更新组件；已验证的 Node.js 运行时可跨构建复用缓存。
 
@@ -26,13 +26,13 @@ cp release-config.json resources/windows-x64/update/
 使用 NSIS 3.x 将载荷编成单个安装程序。
 
 ```sh
-makensis -WX -DVERSION=0.1.10 \
+makensis -WX -DVERSION=0.1.12 \
   -DPAYLOAD=/absolute/path/to/payload \
-  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.10-x64-Setup.exe \
+  -DOUTPUT=/absolute/path/to/TaskbarLabelPicker-0.1.12-x64-Setup.exe \
   TaskbarLabelPicker.nsi
 ```
 
-安装身份为 `Lixing.TaskbarLabelPicker`。程序装入当前用户的 `%LOCALAPPDATA%\Programs\TaskbarLabelPicker`。安装后的唯一入口为开始菜单「任务栏标签」，其目标是同目录的 `TaskbarLabelPickerLauncher.exe`。开机启动使用当前用户的 `Run` 登记并经同一个启动器传递 `--tray`。规则与历史保存在 `%USERPROFILE%\.lixing\TaskbarLabelPicker`，卸载只删除应用、专用后台、开始菜单入口和本应用创建的登录启动登记。
+安装身份为 `Lixing.TaskbarLabelPicker`。程序装入当前用户的 `%LOCALAPPDATA%\Programs\TaskbarLabelPicker`。安装后的唯一入口为开始菜单「任务栏标签」，其目标是同目录的 `TaskbarLabelPickerLauncher.exe`。开机启动使用当前用户的 `Run` 登记并经同一个启动器传递 `--tray`。 如果启动器被调用方的 Windows Job 管理，通过 Windows 的本地进程服务在当前桌面独立发起普通启动和托盘启动。规则与历史保存在 `%USERPROFILE%\.lixing\TaskbarLabelPicker`，卸载只删除应用、专用后台、开始菜单入口和本应用创建的登录启动登记。
 
 离线安装不需要 JDK、Windhawk 开发环境或另行解包。部署 Windows 版本与现有符号缓存不同时，首次启动可按需读取 Microsoft 符号服务器。两个 Windhawk 守护进程不能在同一登录会话并行运行。运行中的第三方 Windhawk 保持由其用户管理。
 

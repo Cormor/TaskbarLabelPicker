@@ -1,3 +1,5 @@
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
-import com.lixing.components.ButtonVariant
 import com.lixing.components.LixingButton
 import com.lixing.components.LixingCheckbox
 import com.lixing.components.LixingTheme
@@ -88,14 +89,11 @@ internal fun TaskbarUpdateWindow(
                 Modifier.fillMaxSize().background(colors.canvas).verticalScroll(rememberScrollState()).padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    BasicText(
-                        "版本与更新",
-                        Modifier.weight(1f),
-                        style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
-                    )
-                    LixingButton("关闭", onClose, variant = ButtonVariant.Quiet)
-                }
+                BasicText(
+                    "版本与更新",
+                    Modifier.semantics { heading() },
+                    style = TextStyle(color = colors.text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+                )
                 BasicText("当前版本 ${state.text("currentVersion") ?: "—"}",
                     style = TextStyle(color = colors.text, fontSize = 13.sp))
                 val status = when (phase) {

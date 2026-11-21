@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Management;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 using System.Text;
@@ -25,10 +26,25 @@ internal static class Launcher
     {
         string action = args.Length == 0 ? "" : args[0];
         if (args.Length > 1) return 2;
+        bool desktopHandoff = action == "--desktop-open" || action == "--desktop-tray";
+        if (desktopHandoff) action = action == "--desktop-tray" ? "--tray" : "";
         try
         {
             if (action.StartsWith("--autostart-", StringComparison.Ordinal))
                 return Autostart(action);
+
+            if (action == "" || action == "--tray")
+            {
+                bool inJob;
+                if (!IsProcessInJob(GetCurrentProcess(), IntPtr.Zero, out inJob))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                if (inJob)
+                {
+                    if (desktopHandoff) throw new IOException("桌面未能独立启动任务栏标签。");
+                    LaunchIndependently(action == "--tray" ? "--desktop-tray" : "--desktop-open");
+                    return 0;
+                }
+            }
 
             using (var mutex = new Mutex(false, InstallMutex))
             {
@@ -64,11 +80,54 @@ internal static class Launcher
         {
             if (action == "")
                 MessageBox.Show(failure.Message, "任务栏标签", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else if (action == "--tray" && ProfileLocation.IsReady)
+                RecordTrayStartupFailure(failure);
             return 1;
         }
     }
 
     static string Quote(string path) { return "\"" + path + "\""; }
+
+    // The local Windows process provider creates the launcher outside the caller's Job.
+    static void LaunchIndependently(string arguments)
+    {
+        const uint breakAwayFromJob = 0x01000000;
+        using (var startupClass = new ManagementClass("Win32_ProcessStartup"))
+        using (var startup = startupClass.CreateInstance())
+        using (var processClass = new ManagementClass("Win32_Process"))
+        using (var request = processClass.GetMethodParameters("Create"))
+        {
+            startup["CreateFlags"] = breakAwayFromJob;
+            startup["WinstationDesktop"] = @"WinSta0\Default";
+            request["CommandLine"] = Quote(Path.Combine(Root, LauncherName)) + " " + arguments;
+            request["CurrentDirectory"] = Root;
+            request["ProcessStartupInformation"] = startup;
+            using (var result = processClass.InvokeMethod("Create", request, null))
+            {
+                uint code = (uint)result["ReturnValue"];
+                if (code != 0) throw new IOException("Windows 无法独立启动任务栏标签，错误码 " + code + "。");
+            }
+        }
+    }
+
+    static void RecordTrayStartupFailure(Exception failure)
+    {
+        try
+        {
+            string details = failure.Message.Replace('\r', ' ').Replace('\n', ' ');
+            File.WriteAllText(Path.Combine(ProfileLocation.DirectoryPath, "launcher-last-error.log"),
+                DateTime.UtcNow.ToString("O") + " " + details.Substring(0, Math.Min(details.Length, 512)) + Environment.NewLine);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, [MarshalAs(UnmanagedType.Bool)] out bool result);
 
     static int Autostart(string action)
     {
